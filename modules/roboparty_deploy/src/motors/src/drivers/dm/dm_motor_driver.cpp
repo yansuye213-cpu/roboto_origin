@@ -7,6 +7,7 @@
 DM_Limit_Param dm_limit_param[DM_Num_Of_Motor] = {
     {12.5, 20, 28, 500, 5},   // DM4340P_48V
     {12.5, 25, 200, 500, 5},  // DM10010L_48V
+    {12.5, 20, 120, 500, 5},  // DMJ6248P
 };
 
 DmMotorDriver::DmMotorDriver(uint16_t motor_id, const std::string& interface_type, const std::string& can_interface, uint16_t master_id_offset,

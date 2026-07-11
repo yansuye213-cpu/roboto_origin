@@ -27,6 +27,7 @@ enum DMError {
 enum DM_Motor_Model { 
     DM4340P_48V, 
     DM10010L_48V, 
+    DMJ6248P,
     DM_Num_Of_Motor 
 };
 
