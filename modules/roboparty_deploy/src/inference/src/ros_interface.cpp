@@ -76,6 +76,24 @@ void InferenceNode::load_config() {
     this->get_parameter("joint_limits", joint_limits_);
     this->get_parameter("gravity_z_upper", gravity_z_upper_);
 
+    if (joint_num_ <= 0) {
+        throw std::runtime_error("joint_num must be positive");
+    }
+    if (usd2urdf_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("usd2urdf must have the same size as joint_num");
+    }
+    if (joint_default_angle_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("joint_default_angle must have the same size as joint_num");
+    }
+    if (!joint_limits_.empty() && joint_limits_.size() != static_cast<size_t>(joint_num_ * 2)) {
+        throw std::runtime_error("joint_limits must be empty or contain 2 values per joint");
+    }
+    for (size_t i = 0; i < usd2urdf_.size(); i++) {
+        if (usd2urdf_[i] < 0 || usd2urdf_[i] >= joint_num_) {
+            throw std::runtime_error("usd2urdf[" + std::to_string(i) + "] is out of joint range");
+        }
+    }
+
     policies_.clear();
     motion_policy_indices_.clear();
     perception_obs_num_ = 0;
@@ -129,6 +147,11 @@ void InferenceNode::load_config() {
         policy.obs_layout = parse_obs_layout(obs_layouts[i], "obs_layouts[" + std::to_string(i) + "]");
         policy.obs_layout_sizes.reserve(policy.obs_layout.size());
         for (const ObsSourceSpec& source : policy.obs_layout) {
+            if ((source.name == "dof_pos" || source.name == "dof_vel" || source.name == "last_action") &&
+                source.size < joint_num_) {
+                throw std::runtime_error(source.name + " in obs_layouts[" + std::to_string(i) +
+                                         "] must be at least joint_num");
+            }
             policy.obs_layout_sizes.push_back(source.size);
             policy.obs_num += source.size;
             if (source.name == "perception") {
@@ -455,15 +478,10 @@ void InferenceNode::init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger
 
 void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    if (!robot_->is_init_.load()) {
-        response->success = false;
-        response->message = "Motors are not initialized, cannot deinit motors.";
-        return;
-    }
     try {
         robot_->deinit_motors();
         response->success = true;
-        response->message = "Motors deinitialized successfully";
+        response->message = "Motor deinit commands sent successfully";
     } catch (const std::exception& e) {
         response->success = false;
         response->message = e.what();

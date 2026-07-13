@@ -12,6 +12,7 @@
 #include <future>
 #include <functional>
 #include <stdexcept>
+#include <iostream>
 
 class ThreadPool {
 public:
@@ -22,7 +23,7 @@ public:
                     pthread_setname_np(pthread_self(), "threadpool");
                     struct sched_param sp{}; sp.sched_priority = 70;
                     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
-                        throw std::runtime_error("Failed to set realtime priority for ThreadPool");
+                        std::cerr << "Failed to set realtime priority for ThreadPool; continuing without SCHED_FIFO" << std::endl;
                     }
                     for(;;) {
                         std::function<void()> task;

@@ -90,15 +90,36 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
     ctx->input_buffer.resize(input_size);
 
     ctx->num_outputs = ctx->session->GetOutputCount();
+    if (ctx->num_outputs != 1) {
+        throw std::runtime_error("Only single-output ONNX models are supported: " + model_path);
+    }
     ctx->output_names.resize(ctx->num_outputs);
-    ctx->output_buffer.resize(joint_num_);
 
     for (size_t i = 0; i < ctx->num_outputs; i++) {
         Ort::AllocatedStringPtr output_name = ctx->session->GetOutputNameAllocated(i, allocator_);
         ctx->output_names[i] = output_name.get();
         auto type_info = ctx->session->GetOutputTypeInfo(i);
         ctx->output_shape = type_info.GetTensorTypeAndShapeInfo().GetShape();
+        if (ctx->output_shape.empty()) {
+            throw std::runtime_error("Unsupported scalar ONNX output for " + model_path);
+        }
+        if (ctx->output_shape[0] == -1) ctx->output_shape[0] = 1;
     }
+
+    size_t model_output_size = 1;
+    for (size_t i = 0; i < ctx->output_shape.size(); i++) {
+        if (ctx->output_shape[i] <= 0) {
+            throw std::runtime_error("Unsupported dynamic ONNX output shape for " + model_path);
+        }
+        model_output_size *= static_cast<size_t>(ctx->output_shape[i]);
+    }
+    if (usd2urdf_.size() > model_output_size) {
+        throw std::runtime_error(
+            "ONNX output size mismatch for " + model_path + ": model provides " +
+            std::to_string(model_output_size) + " actions, but usd2urdf maps " +
+            std::to_string(usd2urdf_.size()) + " actions");
+    }
+    ctx->output_buffer.resize(model_output_size);
 
     ctx->input_names_raw = std::vector<const char *>(ctx->num_inputs, nullptr);
     ctx->output_names_raw = std::vector<const char *>(ctx->num_outputs, nullptr);
@@ -236,9 +257,7 @@ void InferenceNode::control() {
     pthread_setname_np(pthread_self(), "control");
     struct sched_param sp{}; sp.sched_priority = 70;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
-        RCLCPP_FATAL(this->get_logger(), "Failed to set realtime priority for control thread");
-        rclcpp::shutdown();
-        return;
+        RCLCPP_WARN(this->get_logger(), "Failed to set realtime priority for control thread; continuing without SCHED_FIFO");
     }
     auto period = std::chrono::microseconds(static_cast<long long>(dt_ * 1000000));
     while(rclcpp::ok()){
@@ -263,9 +282,7 @@ void InferenceNode::inference() {
     pthread_setname_np(pthread_self(), "inference");
     struct sched_param sp{}; sp.sched_priority = 70;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
-        RCLCPP_FATAL(this->get_logger(), "Failed to set realtime priority for inference thread");
-        rclcpp::shutdown();
-        return;
+        RCLCPP_WARN(this->get_logger(), "Failed to set realtime priority for inference thread; continuing without SCHED_FIFO");
     }
     auto period = std::chrono::microseconds(static_cast<long long>(dt_ * 1000 * 1000 * decimation_));
 
@@ -305,10 +322,13 @@ void InferenceNode::inference() {
 
             {
                 std::unique_lock<std::mutex> lock(act_mutex_);
-                for (int i = 0; i < policy.ctx->output_buffer.size(); i++) {
-                    policy.ctx->output_buffer[i] = std::clamp(policy.ctx->output_buffer[i], -clip_actions_, clip_actions_);
-                    act_[usd2urdf_[i]] = policy.ctx->output_buffer[i];
-                    act_[usd2urdf_[i]] = act_[usd2urdf_[i]] * action_scale_ + joint_default_angle_[usd2urdf_[i]];
+                for (float& action : policy.ctx->output_buffer) {
+                    action = std::clamp(action, -clip_actions_, clip_actions_);
+                }
+                for (size_t i = 0; i < usd2urdf_.size(); i++) {
+                    const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
+                    act_[joint_idx] = policy.ctx->output_buffer[i];
+                    act_[joint_idx] = act_[joint_idx] * action_scale_ + joint_default_angle_[joint_idx];
                 }
                 if(supports_interrupt() && is_interrupt_.load()){
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);
@@ -346,9 +366,7 @@ int main(int argc, char **argv) {
     pthread_setname_np(pthread_self(), "main");
     struct sched_param sp{}; sp.sched_priority = 50;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) != 0) {
-        RCLCPP_FATAL(rclcpp::get_logger("main"), "Failed to set realtime priority for main thread");
-        rclcpp::shutdown();
-        return 1;
+        RCLCPP_WARN(rclcpp::get_logger("main"), "Failed to set realtime priority for main thread; continuing without SCHED_FIFO");
     }
     std::shared_ptr<InferenceNode> node;
     try {

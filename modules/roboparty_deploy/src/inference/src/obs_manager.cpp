@@ -196,7 +196,9 @@ void InferenceNode::get_dof_vel_obs(std::vector<float>& segment) {
 
 void InferenceNode::get_last_action_obs(std::vector<float>& segment) {
     const auto& policy = active_policy();
-    for (int i = 0; i < joint_num_; i++) {
+    std::fill(segment.begin(), segment.end(), 0.0f);
+    const size_t copy_size = std::min(segment.size(), policy.ctx->output_buffer.size());
+    for (size_t i = 0; i < copy_size; i++) {
         segment[i] = policy.ctx->output_buffer[i];
     }
 }
