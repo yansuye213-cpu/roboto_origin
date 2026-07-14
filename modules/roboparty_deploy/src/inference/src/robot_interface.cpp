@@ -212,18 +212,64 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
         }
     }
 
+    std::vector<float> start_motor_pos(motor_pos_target_.size(), 0.0f);
+    std::vector<float> target_motor_pos(motor_pos_target_.size(), 0.0f);
+    {
+        std::unique_lock<std::mutex> lock(joint_mutex_);
+        exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
+            motor->refresh_motor_status();
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        exec_motors_parallel([this, &start_motor_pos](std::shared_ptr<MotorDriver>& motor, int idx) {
+            const size_t ji = motor2urdf_[idx];
+            const float motor_pos = motor->get_motor_pos() * robot_cfg_->motor_sign_[idx];
+            joint_q_[ji] = motor_pos;
+            joint_vel_[ji] = motor->get_motor_spd() * robot_cfg_->motor_sign_[idx];
+            joint_tau_[ji] = motor->get_motor_current() * robot_cfg_->motor_sign_[idx];
+            start_motor_pos[idx] = motor_pos;
+        });
+
+        if (!close_chain_joint_idx_.empty() && ankle_decouple_) {
+            forward_close_chain();
+        }
+    }
+
+    for (size_t i = 0; i < target_motor_pos.size(); i++) {
+        target_motor_pos[i] = static_cast<float>(joint_default_angle[motor2urdf_[i]]);
+    }
+
+    constexpr int ramp_steps = 200;
+    constexpr auto ramp_period = std::chrono::milliseconds(10);
+    constexpr float reset_kp_scale = 1.0f / 2.5f;
+    for (int step = 1; step <= ramp_steps; step++) {
+        const float alpha = static_cast<float>(step) / static_cast<float>(ramp_steps);
+        {
+            std::unique_lock<std::mutex> lock(motors_mutex_);
+            for (size_t i = 0; i < motor_pos_target_.size(); i++){
+                motor_pos_target_[i] = start_motor_pos[i] + alpha * (target_motor_pos[i] - start_motor_pos[i]);
+                motor_vel_target_[i] = 0.0f;
+                motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]) * reset_kp_scale;
+                motor_kd_target_[i]  = static_cast<float>(robot_cfg_->kd_[i]);
+                motor_tau_target_[i] = 0.0f;
+            }
+        }
+        motors_mit_cmd();
+        std::this_thread::sleep_for(ramp_period);
+    }
+
     {
         std::unique_lock<std::mutex> lock(motors_mutex_);
         for (size_t i = 0; i < motor_pos_target_.size(); i++){
-            motor_pos_target_[i] = static_cast<float>(joint_default_angle[motor2urdf_[i]]);
+            motor_pos_target_[i] = target_motor_pos[i];
             motor_vel_target_[i] = 0.0f;
-            motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]) * (1.0f / 2.5f);
+            motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]) * reset_kp_scale;
             motor_kd_target_[i]  = static_cast<float>(robot_cfg_->kd_[i]);
             motor_tau_target_[i] = 0.0f;
         }
     }
-
     motors_mit_cmd();
+
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     {
         std::unique_lock<std::mutex> lock(motors_mutex_);
