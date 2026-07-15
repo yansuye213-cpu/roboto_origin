@@ -145,6 +145,12 @@ void InferenceNode::reset_runtime_state() {
     is_motion_policy_.store(false);
     active_policy_idx_ = 0;
     {
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        control_mode_ = ControlMode::Policy;
+        stand_transition_elapsed_ = 0.0f;
+        stand_transition_active_ = false;
+    }
+    {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
         std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
     }
@@ -199,6 +205,7 @@ void InferenceNode::initialize_runtime_state() {
     cmd_vel_.assign(3, 0.0f);
     act_.assign(joint_num_, 0.0f);
     last_act_.assign(joint_num_, 0.0f);
+    stand_start_action_.assign(joint_num_, 0.0f);
     joint_pos_buffer_.assign(joint_num_, 0.0f);
     joint_vel_buffer_.assign(joint_num_, 0.0f);
     joint_torques_buffer_.assign(joint_num_, 0.0f);
@@ -240,9 +247,79 @@ void InferenceNode::reset_policy_runtime(PolicyRuntime& policy) {
     policy.is_first_frame = true;
 }
 
+void InferenceNode::start_stand_transition_locked() {
+    stand_transition_elapsed_ = 0.0f;
+    stand_transition_active_ = true;
+    stand_start_action_.assign(joint_num_, 0.0f);
+    std::unique_lock<std::mutex> lock(act_mutex_);
+    for (int i = 0; i < joint_num_; i++) {
+        stand_start_action_[i] = last_act_[i];
+    }
+}
+
+void InferenceNode::apply_stand_action() {
+    quat_buffer_ = robot_->get_quat();
+    Eigen::Quaternionf q_b2w(quat_buffer_[0], quat_buffer_[1], quat_buffer_[2], quat_buffer_[3]);
+    Eigen::Vector3f gravity_w(0.0f, 0.0f, -1.0f);
+    Eigen::Vector3f gravity_b = q_b2w.inverse() * gravity_w;
+    if (gravity_b.z() > gravity_z_upper_) {
+        RCLCPP_FATAL(this->get_logger(), "Robot fell down in stand mode! Shutting down...");
+        rclcpp::shutdown();
+        throw std::runtime_error("Robot fell down in stand mode");
+    }
+
+    std::vector<float> target(joint_num_, 0.0f);
+    {
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        if (stand_start_action_.size() != static_cast<size_t>(joint_num_)) {
+            stand_start_action_.assign(joint_num_, 0.0f);
+            for (int i = 0; i < joint_num_; i++) {
+                stand_start_action_[i] = static_cast<float>(joint_default_angle_[i]);
+            }
+        }
+        float blend = 1.0f;
+        if (stand_transition_active_) {
+            stand_transition_elapsed_ += dt_;
+            const float duration = std::max(stand_transition_time_, dt_);
+            blend = std::clamp(stand_transition_elapsed_ / duration, 0.0f, 1.0f);
+            blend = blend * blend * (3.0f - 2.0f * blend);
+            if (stand_transition_elapsed_ >= duration) {
+                stand_transition_active_ = false;
+            }
+        }
+        for (int i = 0; i < joint_num_; i++) {
+            target[i] = stand_start_action_[i] +
+                        blend * (static_cast<float>(stand_joint_angle_[i]) - stand_start_action_[i]);
+            if (!joint_limits_.empty()) {
+                target[i] = std::clamp(target[i],
+                                       static_cast<float>(joint_limits_[i * 2]),
+                                       static_cast<float>(joint_limits_[i * 2 + 1]));
+            }
+        }
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(act_mutex_);
+        act_ = target;
+        last_act_ = target;
+    }
+    robot_->apply_action(target);
+    publish_joint_states();
+    publish_imu();
+    publish_action();
+}
+
 void InferenceNode::apply_action() {
     if(!is_running_.load() || !robot_->is_init_.load()){
         return;
+    }
+    {
+        std::unique_lock<std::mutex> mode_lock(mode_mutex_);
+        if (control_mode_ == ControlMode::Stand) {
+            mode_lock.unlock();
+            apply_stand_action();
+            return;
+        }
     }
     {
         std::unique_lock<std::mutex> lock(act_mutex_);
@@ -295,6 +372,11 @@ void InferenceNode::inference() {
 
         try {
             std::unique_lock<std::mutex> mode_lock(mode_mutex_);
+            if (control_mode_ == ControlMode::Stand) {
+                mode_lock.unlock();
+                std::this_thread::sleep_for(period);
+                continue;
+            }
             auto& policy = active_policy();
             update_obs_segments(policy.obs_segments, policy.obs_layout);
             publish_imu();
@@ -375,11 +457,9 @@ int main(int argc, char **argv) {
         executor.add_node(node);
         RCLCPP_INFO(node->get_logger(), "Press 'X' to initialize/deinitialize motors");
         RCLCPP_INFO(node->get_logger(), "Press 'A' to reset motors");
-        RCLCPP_INFO(node->get_logger(), "Press 'B' to start/pause inference");
+        RCLCPP_INFO(node->get_logger(), "Press 'B' to start/pause control");
         RCLCPP_INFO(node->get_logger(), "Press 'Y' to switch between Gamepad Control / cmd_vel Control");
-        if (node->supports_interrupt() || node->has_motion_policy()){
-            RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode (available in beyondmimic / interrupt modes)");
-        }
+        RCLCPP_INFO(node->get_logger(), "Press 'LB' to enter/exit stand mode");
         if (node->has_motion_policy()){
             RCLCPP_INFO(node->get_logger(), "Press 'RB' to switch motion sequence (available in beyondmimic mode)");
         }

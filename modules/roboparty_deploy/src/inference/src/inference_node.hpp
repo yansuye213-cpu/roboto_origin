@@ -35,6 +35,11 @@ enum class ObsStackOrder {
     ObsMajor,
 };
 
+enum class ControlMode {
+    Policy,
+    Stand,
+};
+
 class InferenceNode;
 
 struct ObsSourceDefinition {
@@ -185,6 +190,7 @@ class InferenceNode : public rclcpp::Node {
    private:
     std::shared_ptr<RobotInterface> robot_;
     std::atomic<bool> is_running_{false}, is_joy_control_{true}, is_interrupt_{false}, is_motion_policy_{false};
+    ControlMode control_mode_ = ControlMode::Policy;
     std::string robot_config_path_;
     std::string perception_obs_topic_;
     size_t current_motion_policy_idx_ = 0;
@@ -208,9 +214,13 @@ class InferenceNode : public rclcpp::Node {
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
         obs_scales_gravity_b_, clip_observations_;
     float action_scale_, clip_actions_;
-    std::vector<double> clip_cmd_, joint_default_angle_, joint_limits_;
+    std::vector<double> clip_cmd_, joint_default_angle_, stand_joint_angle_, joint_limits_;
     std::vector<long int> usd2urdf_;
     float gravity_z_upper_;
+    float stand_transition_time_;
+    float stand_transition_elapsed_ = 0.0f;
+    bool stand_transition_active_ = false;
+    std::vector<float> stand_start_action_;
     int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0;
     std::vector<PolicyRuntime> policies_;
     std::vector<int> motion_policy_indices_;
@@ -228,6 +238,8 @@ class InferenceNode : public rclcpp::Node {
     void inference();
     void control();
     void apply_action();
+    void apply_stand_action();
+    void start_stand_transition_locked();
     PolicyRuntime& active_policy();
     const PolicyRuntime& active_policy() const;
 
