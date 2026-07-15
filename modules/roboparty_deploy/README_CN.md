@@ -492,3 +492,254 @@ robot = robot_py.RobotInterface("src/inference/robots/rpo/robot.yaml")
 robot.init_motors()
 robot.apply_action([0.0] * 23)
 ```
+
+## 常用终端命令备忘
+
+以下命令适用于在个人电脑上直接连接机器人调试的流程。示例环境为 ROS2 Kilted，工作目录为：
+
+```bash
+cd /home/yansuye/Projects/RoboParty/roboto_origin/modules/roboparty_deploy
+```
+
+### 1. 编译与环境
+
+```bash
+conda deactivate
+source /opt/ros/kilted/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+如果只改了 `roboparty_inference` 的 C++ 代码，可以只编译推理包：
+
+```bash
+source /opt/ros/kilted/setup.bash
+colcon build --symlink-install --packages-select roboparty_inference
+source install/setup.bash
+```
+
+如果只修改 `default.yaml` 或 `robot.yaml`，通常重启 `inference_node` 即可生效；若不确定，重新执行一次上面的编译和 `source install/setup.bash`。
+
+### 2. CAN 与 IMU 检查
+
+查看 CAN 状态：
+
+```bash
+ip -details -statistics link show type can
+```
+
+手动拉起四路 CAN：
+
+```bash
+for i in 0 1 2 3; do
+  sudo ip link set can$i down 2>/dev/null
+  sudo ip link set can$i type can bitrate 1000000
+  sudo ip link set can$i txqueuelen 1000
+  sudo ip link set can$i up
+done
+```
+
+安装当前电脑专用 udev 规则：
+
+```bash
+sudo cp assets/99-auto-up-devs-yansuye-legion.rules /etc/udev/rules.d/
+sudo rm -f /etc/udev/rules.d/99-auto-up-devs-orangepi.rules
+sudo rm -f /etc/udev/rules.d/99-auto-up-devs-sunrise.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+临时给 IMU 串口权限：
+
+```bash
+sudo chmod 666 /dev/ttyUSB0
+```
+
+长期权限配置：
+
+```bash
+sudo usermod -aG dialout $USER
+```
+
+执行后需要重新登录或重启。
+
+### 3. 启动 inference 节点
+
+终端 1：
+
+```bash
+cd /home/yansuye/Projects/RoboParty/roboto_origin/modules/roboparty_deploy
+source /opt/ros/kilted/setup.bash
+source install/setup.bash
+
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export FASTDDS_DEFAULT_PROFILES_FILE="$(pwd)/assets/rt_fastdds_profile.xml"
+
+ros2 launch roboparty_inference inference.launch.py robot:=rpo policy:=default
+```
+
+如果只想看节点是否正常启动，不要先按手柄的 `B` 或 `LB`，先只验证电机初始化和复位。
+
+### 4. 启动手柄
+
+终端 2：
+
+```bash
+cd /home/yansuye/Projects/RoboParty/roboto_origin/modules/roboparty_deploy
+source /opt/ros/kilted/setup.bash
+source install/setup.bash
+
+ros2 run joy joy_node
+```
+
+检查手柄数据：
+
+```bash
+ros2 topic echo /joy --once
+```
+
+当前手柄映射：
+
+- `A`: 复位到 `joint_default_angle`
+- `B`: 开始 / 暂停推理
+- `X`: 使能 / 失能电机
+- `Y`: 切换手柄控制 / `/cmd_vel`
+- `LB`: 进入 / 退出站立模式
+- `RB`: 切换运动序列
+
+首次验证默认位姿时，只使用：
+
+```text
+X 使能电机
+A 复位默认位姿
+X 失能电机
+```
+
+不要先按 `B` 或 `LB`。
+
+### 5. 常用 ROS 服务
+
+终端 3：
+
+```bash
+cd /home/yansuye/Projects/RoboParty/roboto_origin/modules/roboparty_deploy
+source /opt/ros/kilted/setup.bash
+source install/setup.bash
+```
+
+查看服务：
+
+```bash
+ros2 service list | grep -E 'init_motors|deinit_motors|reset_joints|refresh_joints|read_joints|read_imu|start_inference|stop_inference|clear_errors'
+```
+
+初始化 / 失能电机：
+
+```bash
+ros2 service call /init_motors std_srvs/srv/Trigger
+ros2 service call /deinit_motors std_srvs/srv/Trigger
+```
+
+清错：
+
+```bash
+ros2 service call /clear_errors std_srvs/srv/Trigger
+```
+
+复位到默认位姿：
+
+```bash
+ros2 service call /reset_joints std_srvs/srv/Trigger
+```
+
+刷新并读取关节：
+
+```bash
+ros2 service call /refresh_joints std_srvs/srv/Trigger
+ros2 service call /read_joints std_srvs/srv/Trigger
+ros2 topic echo /joint_states --once
+```
+
+读取 IMU：
+
+```bash
+ros2 service call /read_imu std_srvs/srv/Trigger
+ros2 topic echo /imu --once
+```
+
+开始 / 停止推理：
+
+```bash
+ros2 service call /start_inference std_srvs/srv/Trigger
+ros2 service call /stop_inference std_srvs/srv/Trigger
+```
+
+### 6. CAN 电机回包调试
+
+监听四路 CAN：
+
+```bash
+candump -td can0 can1 can2 can3
+```
+
+扫描每路 ID 1 到 6 的 DM 电机状态回包：
+
+```bash
+for bus in can0 can1 can2 can3; do
+  echo "==== $bus ===="
+  for id in 01 02 03 04 05 06; do
+    cansend $bus 7FF#${id}00CC0000000000
+    sleep 0.1
+  done
+done
+```
+
+单独查询某个电机，例如 `can2` 的 ID5：
+
+```bash
+candump -td can2
+cansend can2 7FF#0500CC0000000000
+```
+
+正常情况下，ID5 的 master 回包应为：
+
+```text
+can2 015 [8] ...
+```
+
+如果只看到 `7FF`，没有 `011` 到 `016` 这类回包，优先检查电机供电、CAN-H/CAN-L、波特率、ID 和 master ID。
+
+### 7. 当前机器人 CAN 映射记录
+
+当前个人电脑调试映射：
+
+```text
+can0: 右腿，ID 从末端到身体递增
+can1: 左腿，ID 从末端到身体递增
+can2: 右手 + 头，ID 从末端到身体递增
+can3: 左手，ID 从末端到身体递增
+```
+
+当前 `joint_default_angle` 的 joint 顺序：
+
+```text
+position[0:6]   左腿
+position[6:12]  右腿
+position[12]    头
+position[13:17] 左手
+position[17:21] 右手
+```
+
+### 8. 安全验证顺序
+
+第一次启动或修改配置后，建议按下面顺序验证：
+
+```text
+1. ip -details -statistics link show type can
+2. candump / cansend 确认目标电机有回包
+3. 启动 inference_node
+4. 启动 joy_node
+5. X 使能，确认电机只变硬、不乱动
+6. A 复位，确认机器人缓慢回默认位姿
+7. 确认 IMU 正常后，再考虑 B 推理或 LB 站立模式
+```
