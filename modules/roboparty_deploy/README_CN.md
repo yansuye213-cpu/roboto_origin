@@ -312,6 +312,7 @@ screen -S joy_session -X quit
 - **B 键**: 开始 / 暂停推理
 - **Y 键**: 切换手柄控制 / cmd_vel 指令控制
 - **LB 键**: 切换策略模式（在 beyondmimic / interrupt 模式下可用）
+- **LSB（左摇杆按下）**: 进入 / 退出站立模式
 - **RB 键**: 切换运动序列（在 beyondmimic 模式下可用）
 - **右摇杆**: 控制前后左右移动
 - **LT/RT**: 控制转向（左 / 右旋转）
@@ -578,7 +579,7 @@ export FASTDDS_DEFAULT_PROFILES_FILE="$(pwd)/assets/rt_fastdds_profile.xml"
 ros2 launch roboparty_inference inference.launch.py robot:=rpo policy:=default
 ```
 
-如果只想看节点是否正常启动，不要先按手柄的 `B` 或 `LB`，先只验证电机初始化和复位。
+如果只想看节点是否正常启动，不要先按手柄的 `B` 或 `LSB`，先只验证电机初始化和复位。
 
 ### 4. 启动手柄
 
@@ -604,7 +605,8 @@ ros2 topic echo /joy --once
 - `B`: 开始 / 暂停推理
 - `X`: 使能 / 失能电机
 - `Y`: 切换手柄控制 / `/cmd_vel`
-- `LB`: 进入 / 退出站立模式
+- `LB`: 切换策略模式
+- `LSB`（左摇杆按下）: 进入 / 退出站立模式
 - `RB`: 切换运动序列
 
 首次验证默认位姿时，只使用：
@@ -615,7 +617,7 @@ A 复位默认位姿
 X 失能电机
 ```
 
-不要先按 `B` 或 `LB`。
+不要先按 `B` 或 `LSB`。
 
 ### 5. 常用 ROS 服务
 
@@ -741,5 +743,5 @@ position[17:21] 右手
 4. 启动 joy_node
 5. X 使能，确认电机只变硬、不乱动
 6. A 复位，确认机器人缓慢回默认位姿
-7. 确认 IMU 正常后，再考虑 B 推理或 LB 站立模式
+7. 确认 IMU 正常后，再考虑 B 推理或 LSB 站立模式
 ```

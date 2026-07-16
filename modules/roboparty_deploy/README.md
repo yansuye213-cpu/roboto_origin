@@ -312,6 +312,7 @@ If you need to switch to a different policy model, pass the `policy` argument. I
 - **B Button**: Start / Pause inference
 - **Y Button**: Switch between Gamepad Control / cmd_vel Control
 - **LB Button**: Switch policy mode (available in beyondmimic / interrupt modes)
+- **LSB Button (press Left Stick)**: Enter / Exit stand mode
 - **RB Button**: Switch motion sequence (available in beyondmimic mode)
 - **Right Stick**: Control forward, backward, left and right movement
 - **LT/RT**: Control turning (left / right rotation)

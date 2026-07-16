@@ -220,8 +220,14 @@ class InferenceNode : public rclcpp::Node {
     float stand_transition_time_;
     float stand_transition_elapsed_ = 0.0f;
     bool stand_transition_active_ = false;
+    int stand_mpc_horizon_;
+    float stand_mpc_q_angle_, stand_mpc_q_rate_, stand_mpc_r_accel_;
+    float stand_mpc_max_accel_, stand_mpc_roll_gain_, stand_mpc_pitch_gain_, stand_mpc_max_joint_correction_;
+    float stand_mpc_target_roll_, stand_mpc_target_pitch_;
+    std::vector<double> stand_mpc_roll_joint_scale_, stand_mpc_pitch_joint_scale_;
     std::vector<float> stand_start_action_;
-    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0;
+    std::vector<float> stand_kp_, stand_kd_;
+    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0;
     std::vector<PolicyRuntime> policies_;
     std::vector<int> motion_policy_indices_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_joints_service_, set_zeros_service_, clear_errors_service_, refresh_joints_service_, read_joints_service_, read_imu_service_, init_motors_service_, deinit_motors_service_, start_inference_service_, stop_inference_service_;
@@ -240,6 +246,7 @@ class InferenceNode : public rclcpp::Node {
     void apply_action();
     void apply_stand_action();
     void start_stand_transition_locked();
+    float solve_stand_mpc_axis(float angle, float rate, float target_angle) const;
     PolicyRuntime& active_policy();
     const PolicyRuntime& active_policy() const;
 

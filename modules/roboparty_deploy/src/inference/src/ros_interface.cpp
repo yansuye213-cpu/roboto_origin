@@ -35,6 +35,20 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_joint_angle", std::vector<double>{});
     this->declare_parameter<float>("stand_transition_time", 1.5);
+    this->declare_parameter<int>("stand_mpc_horizon", 20);
+    this->declare_parameter<float>("stand_mpc_q_angle", 120.0);
+    this->declare_parameter<float>("stand_mpc_q_rate", 4.0);
+    this->declare_parameter<float>("stand_mpc_r_accel", 0.08);
+    this->declare_parameter<float>("stand_mpc_max_accel", 12.0);
+    this->declare_parameter<float>("stand_mpc_roll_gain", 0.003);
+    this->declare_parameter<float>("stand_mpc_pitch_gain", 0.003);
+    this->declare_parameter<float>("stand_mpc_max_joint_correction", 0.08);
+    this->declare_parameter<float>("stand_mpc_target_roll", 0.0);
+    this->declare_parameter<float>("stand_mpc_target_pitch", 0.0);
+    this->declare_parameter<std::vector<double>>("stand_mpc_roll_joint_scale", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("stand_mpc_pitch_joint_scale", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("stand_kp", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("stand_kd", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("joint_limits", std::vector<double>{});
     this->declare_parameter<float>("gravity_z_upper", -0.5);
     std::vector<std::string> model_names;
@@ -77,6 +91,22 @@ void InferenceNode::load_config() {
     this->get_parameter("joint_default_angle", joint_default_angle_);
     this->get_parameter("stand_joint_angle", stand_joint_angle_);
     this->get_parameter("stand_transition_time", stand_transition_time_);
+    this->get_parameter("stand_mpc_horizon", stand_mpc_horizon_);
+    this->get_parameter("stand_mpc_q_angle", stand_mpc_q_angle_);
+    this->get_parameter("stand_mpc_q_rate", stand_mpc_q_rate_);
+    this->get_parameter("stand_mpc_r_accel", stand_mpc_r_accel_);
+    this->get_parameter("stand_mpc_max_accel", stand_mpc_max_accel_);
+    this->get_parameter("stand_mpc_roll_gain", stand_mpc_roll_gain_);
+    this->get_parameter("stand_mpc_pitch_gain", stand_mpc_pitch_gain_);
+    this->get_parameter("stand_mpc_max_joint_correction", stand_mpc_max_joint_correction_);
+    this->get_parameter("stand_mpc_target_roll", stand_mpc_target_roll_);
+    this->get_parameter("stand_mpc_target_pitch", stand_mpc_target_pitch_);
+    this->get_parameter("stand_mpc_roll_joint_scale", stand_mpc_roll_joint_scale_);
+    this->get_parameter("stand_mpc_pitch_joint_scale", stand_mpc_pitch_joint_scale_);
+    std::vector<double> stand_kp_config;
+    std::vector<double> stand_kd_config;
+    this->get_parameter("stand_kp", stand_kp_config);
+    this->get_parameter("stand_kd", stand_kd_config);
     this->get_parameter("joint_limits", joint_limits_);
     this->get_parameter("gravity_z_upper", gravity_z_upper_);
 
@@ -98,6 +128,49 @@ void InferenceNode::load_config() {
     if (stand_transition_time_ <= 0.0f) {
         throw std::runtime_error("stand_transition_time must be positive");
     }
+    if (stand_mpc_horizon_ <= 0) {
+        throw std::runtime_error("stand_mpc_horizon must be positive");
+    }
+    if (stand_mpc_q_angle_ < 0.0f || stand_mpc_q_rate_ < 0.0f || stand_mpc_r_accel_ <= 0.0f) {
+        throw std::runtime_error("stand MPC weights must be non-negative, and stand_mpc_r_accel must be positive");
+    }
+    if (stand_mpc_max_accel_ <= 0.0f || stand_mpc_max_joint_correction_ < 0.0f) {
+        throw std::runtime_error("stand MPC limits must be positive");
+    }
+    if (stand_mpc_roll_joint_scale_.empty()) {
+        stand_mpc_roll_joint_scale_.assign(joint_num_, 0.0);
+        if (joint_num_ > 11) {
+            stand_mpc_roll_joint_scale_[1] = 0.35;
+            stand_mpc_roll_joint_scale_[5] = 1.0;
+            stand_mpc_roll_joint_scale_[7] = 0.35;
+            stand_mpc_roll_joint_scale_[11] = 1.0;
+        }
+    }
+    if (stand_mpc_pitch_joint_scale_.empty()) {
+        stand_mpc_pitch_joint_scale_.assign(joint_num_, 0.0);
+        if (joint_num_ > 10) {
+            stand_mpc_pitch_joint_scale_[2] = 0.35;
+            stand_mpc_pitch_joint_scale_[3] = -0.15;
+            stand_mpc_pitch_joint_scale_[4] = 1.0;
+            stand_mpc_pitch_joint_scale_[8] = 0.35;
+            stand_mpc_pitch_joint_scale_[9] = -0.15;
+            stand_mpc_pitch_joint_scale_[10] = 1.0;
+        }
+    }
+    if (stand_mpc_roll_joint_scale_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("stand_mpc_roll_joint_scale must be empty or have the same size as joint_num");
+    }
+    if (stand_mpc_pitch_joint_scale_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("stand_mpc_pitch_joint_scale must be empty or have the same size as joint_num");
+    }
+    if (!stand_kp_config.empty() && stand_kp_config.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("stand_kp must be empty or have the same size as joint_num");
+    }
+    if (!stand_kd_config.empty() && stand_kd_config.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("stand_kd must be empty or have the same size as joint_num");
+    }
+    stand_kp_.assign(stand_kp_config.begin(), stand_kp_config.end());
+    stand_kd_.assign(stand_kd_config.begin(), stand_kd_config.end());
     if (!joint_limits_.empty() && joint_limits_.size() != static_cast<size_t>(joint_num_ * 2)) {
         throw std::runtime_error("joint_limits must be empty or contain 2 values per joint");
     }
@@ -229,6 +302,20 @@ void InferenceNode::load_config() {
     print_vector<double>("joint_default_angle", joint_default_angle_);
     print_vector<double>("stand_joint_angle", stand_joint_angle_);
     RCLCPP_INFO(this->get_logger(), "stand_transition_time: %f", stand_transition_time_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_horizon: %d", stand_mpc_horizon_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_angle: %f", stand_mpc_q_angle_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_rate: %f", stand_mpc_q_rate_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_r_accel: %f", stand_mpc_r_accel_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_accel: %f", stand_mpc_max_accel_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_roll_gain: %f", stand_mpc_roll_gain_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_pitch_gain: %f", stand_mpc_pitch_gain_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_joint_correction: %f", stand_mpc_max_joint_correction_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_roll: %f", stand_mpc_target_roll_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_pitch: %f", stand_mpc_target_pitch_);
+    print_vector<double>("stand_mpc_roll_joint_scale", stand_mpc_roll_joint_scale_);
+    print_vector<double>("stand_mpc_pitch_joint_scale", stand_mpc_pitch_joint_scale_);
+    print_vector<float>("stand_kp", stand_kp_);
+    print_vector<float>("stand_kd", stand_kd_);
     print_vector<double>("joint_limits", joint_limits_);
     RCLCPP_INFO(this->get_logger(), "gravity_z_upper: %f", gravity_z_upper_);
 }
@@ -240,6 +327,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     constexpr int kButtonX = 3;
     constexpr int kButtonLB = 4;
     constexpr int kButtonRB = 5;
+    constexpr int kButtonLSB = 11;
 
     if (is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
@@ -286,29 +374,73 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         is_joy_control_.store(!is_joy_control_);
         RCLCPP_INFO(this->get_logger(), "Controlled by %s", is_joy_control_.load() ? "joy" : "/cmd_vel");
     }
-    if (msg->buttons[kButtonLB] == 1 && msg->buttons[kButtonLB] != last_button4_) {
-        std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
-        if (!robot_->is_init_.load()) {
-            RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot enter stand mode");
-        } else {
-            std::unique_lock<std::mutex> lock(mode_mutex_);
-            if (control_mode_ == ControlMode::Stand) {
-                control_mode_ = ControlMode::Policy;
-                stand_transition_active_ = false;
-                is_running_.store(false);
-                RCLCPP_INFO(this->get_logger(), "Stand mode disabled");
-            } else {
-                control_mode_ = ControlMode::Stand;
-                is_interrupt_.store(false);
-                is_motion_policy_.store(false);
-                active_policy_idx_ = 0;
-                start_stand_transition_locked();
-                is_running_.store(true);
-                RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
+    if (supports_interrupt() || has_motion_policy()) {
+        if (msg->buttons[kButtonLB] == 1 && msg->buttons[kButtonLB] != last_button4_) {
+            const auto switch_while_paused = [this](auto&& switch_mode) {
+                std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
+                const bool restore_running = is_running_.exchange(false);
+                if (restore_running) {
+                    RCLCPP_INFO(this->get_logger(), "Inference paused");
+                }
+                try {
+                    switch_mode();
+                } catch (...) {
+                    if (restore_running) {
+                        is_running_.store(true);
+                        RCLCPP_INFO(this->get_logger(), "Inference started");
+                    }
+                    throw;
+                }
+                if (restore_running) {
+                    is_running_.store(true);
+                    RCLCPP_INFO(this->get_logger(), "Inference started");
+                }
+            };
+            if (supports_interrupt()) {
+                switch_while_paused([this]() {
+                    std::unique_lock<std::mutex> lock(mode_mutex_);
+                    is_interrupt_.store(!is_interrupt_.load());
+                    RCLCPP_INFO(this->get_logger(), "Interrupt mode %s", is_interrupt_.load() ? "enabled" : "disabled");
+                });
+            } else if (has_motion_policy()) {
+                switch_while_paused([this]() {
+                    std::string policy_name;
+                    std::unique_lock<std::mutex> lock(mode_mutex_);
+                    is_motion_policy_.store(!is_motion_policy_.load());
+                    active_policy_idx_ = is_motion_policy_.load() ? motion_policy_indices_[current_motion_policy_idx_] : 0;
+                    reset_policy_runtime(active_policy());
+                    policy_name = active_policy().name;
+                    RCLCPP_INFO(this->get_logger(), "Policy enabled: %s", policy_name.c_str());
+                });
             }
         }
+        last_button4_ = msg->buttons[kButtonLB];
     }
-    last_button4_ = msg->buttons[kButtonLB];
+    if (msg->buttons.size() > static_cast<size_t>(kButtonLSB)) {
+        if (msg->buttons[kButtonLSB] == 1 && msg->buttons[kButtonLSB] != last_button_lsb_) {
+            std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
+            if (!robot_->is_init_.load()) {
+                RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot enter stand mode");
+            } else {
+                std::unique_lock<std::mutex> lock(mode_mutex_);
+                if (control_mode_ == ControlMode::Stand) {
+                    control_mode_ = ControlMode::Policy;
+                    stand_transition_active_ = false;
+                    is_running_.store(false);
+                    RCLCPP_INFO(this->get_logger(), "Stand mode disabled");
+                } else {
+                    control_mode_ = ControlMode::Stand;
+                    is_interrupt_.store(false);
+                    is_motion_policy_.store(false);
+                    active_policy_idx_ = 0;
+                    start_stand_transition_locked();
+                    is_running_.store(true);
+                    RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
+                }
+            }
+        }
+        last_button_lsb_ = msg->buttons[kButtonLSB];
+    }
     if (has_motion_policy()) {
         if (msg->buttons[kButtonRB] == 1 && msg->buttons[kButtonRB] != last_button5_) {
             std::unique_lock<std::mutex> lock(mode_mutex_);
