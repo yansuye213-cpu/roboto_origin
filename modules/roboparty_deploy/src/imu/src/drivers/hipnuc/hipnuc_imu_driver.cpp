@@ -57,19 +57,57 @@ void HipnucIMUDriver::serial_rx_cbk(const uint8_t* data, size_t length) {
     
     for (size_t i = 0; i < length; i++) {
         if (hipnuc_input(&raw_, data[i])) {
-            // Update sensor data from parsed raw data
-            sensor_data_.quat_w = raw_.hi91.quat[0];
-            sensor_data_.quat_x = raw_.hi91.quat[1];
-            sensor_data_.quat_y = raw_.hi91.quat[2];
-            sensor_data_.quat_z = raw_.hi91.quat[3];
-            
-            sensor_data_.gyr_x = raw_.hi91.gyr[0] * DEG_TO_RAD;
-            sensor_data_.gyr_y = raw_.hi91.gyr[1] * DEG_TO_RAD;
-            sensor_data_.gyr_z = raw_.hi91.gyr[2] * DEG_TO_RAD;
-            
-            sensor_data_.acc_x = raw_.hi91.acc[0] * GRA_ACC;
-            sensor_data_.acc_y = raw_.hi91.acc[1] * GRA_ACC;
-            sensor_data_.acc_z = raw_.hi91.acc[2] * GRA_ACC;
+            if (raw_.hi91.tag) {
+                sensor_data_.quat_w = raw_.hi91.quat[0];
+                sensor_data_.quat_x = raw_.hi91.quat[1];
+                sensor_data_.quat_y = raw_.hi91.quat[2];
+                sensor_data_.quat_z = raw_.hi91.quat[3];
+                sensor_data_.gyr_x = raw_.hi91.gyr[0] * DEG_TO_RAD;
+                sensor_data_.gyr_y = raw_.hi91.gyr[1] * DEG_TO_RAD;
+                sensor_data_.gyr_z = raw_.hi91.gyr[2] * DEG_TO_RAD;
+                sensor_data_.acc_x = raw_.hi91.acc[0] * GRA_ACC;
+                sensor_data_.acc_y = raw_.hi91.acc[1] * GRA_ACC;
+                sensor_data_.acc_z = raw_.hi91.acc[2] * GRA_ACC;
+            } else if (raw_.hi92.tag) {
+                sensor_data_.quat_w = raw_.hi92.quat[0] * 0.0001f;
+                sensor_data_.quat_x = raw_.hi92.quat[1] * 0.0001f;
+                sensor_data_.quat_y = raw_.hi92.quat[2] * 0.0001f;
+                sensor_data_.quat_z = raw_.hi92.quat[3] * 0.0001f;
+                sensor_data_.gyr_x = raw_.hi92.gyr_b[0] * 0.001f;
+                sensor_data_.gyr_y = raw_.hi92.gyr_b[1] * 0.001f;
+                sensor_data_.gyr_z = raw_.hi92.gyr_b[2] * 0.001f;
+                sensor_data_.acc_x = raw_.hi92.acc_b[0] * 0.0048828f * GRA_ACC;
+                sensor_data_.acc_y = raw_.hi92.acc_b[1] * 0.0048828f * GRA_ACC;
+                sensor_data_.acc_z = raw_.hi92.acc_b[2] * 0.0048828f * GRA_ACC;
+            } else if (raw_.hi81.tag) {
+                sensor_data_.quat_w = raw_.hi81.quat[0] * 0.0001f;
+                sensor_data_.quat_x = raw_.hi81.quat[1] * 0.0001f;
+                sensor_data_.quat_y = raw_.hi81.quat[2] * 0.0001f;
+                sensor_data_.quat_z = raw_.hi81.quat[3] * 0.0001f;
+                sensor_data_.gyr_x = raw_.hi81.gyr_b[0] * 0.001f;
+                sensor_data_.gyr_y = raw_.hi81.gyr_b[1] * 0.001f;
+                sensor_data_.gyr_z = raw_.hi81.gyr_b[2] * 0.001f;
+                sensor_data_.acc_x = raw_.hi81.acc_b[0] * 0.0048828f * GRA_ACC;
+                sensor_data_.acc_y = raw_.hi81.acc_b[1] * 0.0048828f * GRA_ACC;
+                sensor_data_.acc_z = raw_.hi81.acc_b[2] * 0.0048828f * GRA_ACC;
+            } else if (raw_.hi83.tag) {
+                if (raw_.hi83.data_bitmap & HI83_BMAP_QUAT) {
+                    sensor_data_.quat_w = raw_.hi83.quat[0];
+                    sensor_data_.quat_x = raw_.hi83.quat[1];
+                    sensor_data_.quat_y = raw_.hi83.quat[2];
+                    sensor_data_.quat_z = raw_.hi83.quat[3];
+                }
+                if (raw_.hi83.data_bitmap & HI83_BMAP_GYR_B) {
+                    sensor_data_.gyr_x = raw_.hi83.gyr_b[0];
+                    sensor_data_.gyr_y = raw_.hi83.gyr_b[1];
+                    sensor_data_.gyr_z = raw_.hi83.gyr_b[2];
+                }
+                if (raw_.hi83.data_bitmap & HI83_BMAP_ACC_B) {
+                    sensor_data_.acc_x = raw_.hi83.acc_b[0] * GRA_ACC;
+                    sensor_data_.acc_y = raw_.hi83.acc_b[1] * GRA_ACC;
+                    sensor_data_.acc_z = raw_.hi83.acc_b[2] * GRA_ACC;
+                }
+            }
         }
     }
 }

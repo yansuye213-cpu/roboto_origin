@@ -9,7 +9,6 @@
  #include "hipnuc_dec.h"
 
  /* The driver file for decoding HiPNUC protocol, DO NOT MODIFTY*/
- 
  /* HiPNUC protocol constants */
  #define CHSYNC1                 (0x5A)              /* CHAOHE message sync code 1 */
  #define CHSYNC2                 (0xA5)              /* CHAOHE message sync code 2 */
@@ -177,6 +176,7 @@ static double D8(uint8_t *p)
             if (bm & HI83_BMAP_GNSS_VEL) { raw->hi83.gnss_vel[0] = R4(p + idx + 0); raw->hi83.gnss_vel[1] = R4(p + idx + 4); raw->hi83.gnss_vel[2] = R4(p + idx + 8); idx += 12; }
 
             ofs = idx;
+            break;
         }
          case HIPNUC_ID_HI92:
              memcpy(&raw->hi92, p + ofs, sizeof(hi92_t));
@@ -550,7 +550,6 @@ static double D8(uint8_t *p)
              }
              crc = temp;
          }
-     } 
+     }
      *inital = crc;
  }
- 

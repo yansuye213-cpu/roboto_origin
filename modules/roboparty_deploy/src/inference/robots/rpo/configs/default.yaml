@@ -42,7 +42,7 @@ inference_node:
         stand_mpc_r_accel: 0.08
         stand_mpc_max_accel: 12.0
         stand_mpc_roll_gain: 0.003
-        stand_mpc_pitch_gain: -0.010
+        stand_mpc_pitch_gain: 0.010
         stand_mpc_max_joint_correction: 0.16
         stand_mpc_target_roll: 0.0
         stand_mpc_target_pitch: 0.0

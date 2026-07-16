@@ -82,8 +82,39 @@ class RobotInterface {
             throw std::runtime_error("IMU not initialized");
         }
         auto raw = imu_->get_quat();  // w, x, y, z
-        q_body_ = Eigen::Quaternionf(raw[0], raw[1], raw[2], raw[3]) * extrinsic_q_inv_;
-        q_body_.normalize();
+        Eigen::Quaternionf raw_q(raw[0], raw[1], raw[2], raw[3]);
+        if (raw_q.norm() > 1.0e-6f) {
+            q_body_ = raw_q * extrinsic_q_inv_;
+            q_body_.normalize();
+        } else {
+            q_body_ = Eigen::Quaternionf::Identity();
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (has_last_quat_) {
+            const float dt = std::chrono::duration<float>(now - last_quat_time_).count();
+            if (dt > 1.0e-4f && dt < 1.0f) {
+                Eigen::Quaternionf delta = last_q_body_.conjugate() * q_body_;
+                delta.normalize();
+                if (delta.w() < 0.0f) {
+                    delta.coeffs() *= -1.0f;
+                }
+                const Eigen::Vector3f v(delta.x(), delta.y(), delta.z());
+                const float s = v.norm();
+                Eigen::Vector3f omega = Eigen::Vector3f::Zero();
+                if (s > 1.0e-6f) {
+                    const float angle = 2.0f * std::atan2(s, delta.w());
+                    omega = (angle / dt) * (v / s);
+                } else {
+                    omega = (2.0f / dt) * v;
+                }
+                quat_ang_vel_buf_[0] = omega.x();
+                quat_ang_vel_buf_[1] = omega.y();
+                quat_ang_vel_buf_[2] = omega.z();
+            }
+        }
+        last_q_body_ = q_body_;
+        last_quat_time_ = now;
+        has_last_quat_ = true;
         quat_buf_[0] = q_body_.w();
         quat_buf_[1] = q_body_.x();
         quat_buf_[2] = q_body_.y(); 
@@ -97,6 +128,11 @@ class RobotInterface {
         auto raw = imu_->get_ang_vel();  // in IMU frame
         Eigen::Map<const Eigen::Vector3f> omega_imu(raw.data());
         Eigen::Map<Eigen::Vector3f>(ang_vel_buf_.data()) = extrinsic_R_mat_ * omega_imu;
+        if (std::abs(ang_vel_buf_[0]) < 1.0e-6f &&
+            std::abs(ang_vel_buf_[1]) < 1.0e-6f &&
+            std::abs(ang_vel_buf_[2]) < 1.0e-6f) {
+            ang_vel_buf_ = quat_ang_vel_buf_;
+        }
         return ang_vel_buf_;
     }
 
@@ -112,8 +148,12 @@ class RobotInterface {
     Eigen::Matrix3f extrinsic_R_mat_ = Eigen::Matrix3f::Identity();
     Eigen::Quaternionf extrinsic_q_inv_ = Eigen::Quaternionf::Identity();
     Eigen::Quaternionf q_body_;
+    Eigen::Quaternionf last_q_body_ = Eigen::Quaternionf::Identity();
+    std::chrono::steady_clock::time_point last_quat_time_;
+    bool has_last_quat_ = false;
     std::vector<float> quat_buf_{0.f, 0.f, 0.f, 0.f};
     std::vector<float> ang_vel_buf_{0.f, 0.f, 0.f};
+    std::vector<float> quat_ang_vel_buf_{0.f, 0.f, 0.f};
     std::vector<std::shared_ptr<MotorDriver>> motors_;
     std::unique_ptr<ThreadPool> thread_pool_;
     std::vector<float> cached_ankle_action_;
