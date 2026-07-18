@@ -91,18 +91,18 @@ void InferenceNode::load_config() {
     this->get_parameter("joint_default_angle", joint_default_angle_);
     this->get_parameter("stand_joint_angle", stand_joint_angle_);
     this->get_parameter("stand_transition_time", stand_transition_time_);
-    this->get_parameter("stand_mpc_horizon", stand_mpc_horizon_);
-    this->get_parameter("stand_mpc_q_angle", stand_mpc_q_angle_);
-    this->get_parameter("stand_mpc_q_rate", stand_mpc_q_rate_);
-    this->get_parameter("stand_mpc_r_accel", stand_mpc_r_accel_);
-    this->get_parameter("stand_mpc_max_accel", stand_mpc_max_accel_);
-    this->get_parameter("stand_mpc_roll_gain", stand_mpc_roll_gain_);
-    this->get_parameter("stand_mpc_pitch_gain", stand_mpc_pitch_gain_);
-    this->get_parameter("stand_mpc_max_joint_correction", stand_mpc_max_joint_correction_);
-    this->get_parameter("stand_mpc_target_roll", stand_mpc_target_roll_);
-    this->get_parameter("stand_mpc_target_pitch", stand_mpc_target_pitch_);
-    this->get_parameter("stand_mpc_roll_joint_scale", stand_mpc_roll_joint_scale_);
-    this->get_parameter("stand_mpc_pitch_joint_scale", stand_mpc_pitch_joint_scale_);
+    this->get_parameter("stand_mpc_horizon", stand_stabilizer_config_.horizon);
+    this->get_parameter("stand_mpc_q_angle", stand_stabilizer_config_.q_angle);
+    this->get_parameter("stand_mpc_q_rate", stand_stabilizer_config_.q_rate);
+    this->get_parameter("stand_mpc_r_accel", stand_stabilizer_config_.r_accel);
+    this->get_parameter("stand_mpc_max_accel", stand_stabilizer_config_.max_accel);
+    this->get_parameter("stand_mpc_roll_gain", stand_stabilizer_config_.roll_gain);
+    this->get_parameter("stand_mpc_pitch_gain", stand_stabilizer_config_.pitch_gain);
+    this->get_parameter("stand_mpc_max_joint_correction", stand_stabilizer_config_.max_joint_correction);
+    this->get_parameter("stand_mpc_target_roll", stand_stabilizer_config_.target_roll);
+    this->get_parameter("stand_mpc_target_pitch", stand_stabilizer_config_.target_pitch);
+    this->get_parameter("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
+    this->get_parameter("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
     std::vector<double> stand_kp_config;
     std::vector<double> stand_kd_config;
     this->get_parameter("stand_kp", stand_kp_config);
@@ -128,39 +128,42 @@ void InferenceNode::load_config() {
     if (stand_transition_time_ <= 0.0f) {
         throw std::runtime_error("stand_transition_time must be positive");
     }
-    if (stand_mpc_horizon_ <= 0) {
+    stand_stabilizer_config_.joint_num = joint_num_;
+    stand_stabilizer_config_.dt = dt_;
+    if (stand_stabilizer_config_.horizon <= 0) {
         throw std::runtime_error("stand_mpc_horizon must be positive");
     }
-    if (stand_mpc_q_angle_ < 0.0f || stand_mpc_q_rate_ < 0.0f || stand_mpc_r_accel_ <= 0.0f) {
+    if (stand_stabilizer_config_.q_angle < 0.0f || stand_stabilizer_config_.q_rate < 0.0f ||
+        stand_stabilizer_config_.r_accel <= 0.0f) {
         throw std::runtime_error("stand MPC weights must be non-negative, and stand_mpc_r_accel must be positive");
     }
-    if (stand_mpc_max_accel_ <= 0.0f || stand_mpc_max_joint_correction_ < 0.0f) {
+    if (stand_stabilizer_config_.max_accel <= 0.0f || stand_stabilizer_config_.max_joint_correction < 0.0f) {
         throw std::runtime_error("stand MPC limits must be positive");
     }
-    if (stand_mpc_roll_joint_scale_.empty()) {
-        stand_mpc_roll_joint_scale_.assign(joint_num_, 0.0);
+    if (stand_stabilizer_config_.roll_joint_scale.empty()) {
+        stand_stabilizer_config_.roll_joint_scale.assign(joint_num_, 0.0);
         if (joint_num_ > 11) {
-            stand_mpc_roll_joint_scale_[1] = 0.35;
-            stand_mpc_roll_joint_scale_[5] = 1.0;
-            stand_mpc_roll_joint_scale_[7] = 0.35;
-            stand_mpc_roll_joint_scale_[11] = 1.0;
+            stand_stabilizer_config_.roll_joint_scale[1] = 0.35;
+            stand_stabilizer_config_.roll_joint_scale[5] = 1.0;
+            stand_stabilizer_config_.roll_joint_scale[7] = 0.35;
+            stand_stabilizer_config_.roll_joint_scale[11] = 1.0;
         }
     }
-    if (stand_mpc_pitch_joint_scale_.empty()) {
-        stand_mpc_pitch_joint_scale_.assign(joint_num_, 0.0);
+    if (stand_stabilizer_config_.pitch_joint_scale.empty()) {
+        stand_stabilizer_config_.pitch_joint_scale.assign(joint_num_, 0.0);
         if (joint_num_ > 10) {
-            stand_mpc_pitch_joint_scale_[2] = 0.35;
-            stand_mpc_pitch_joint_scale_[3] = -0.15;
-            stand_mpc_pitch_joint_scale_[4] = 1.0;
-            stand_mpc_pitch_joint_scale_[8] = 0.35;
-            stand_mpc_pitch_joint_scale_[9] = -0.15;
-            stand_mpc_pitch_joint_scale_[10] = 1.0;
+            stand_stabilizer_config_.pitch_joint_scale[2] = 0.35;
+            stand_stabilizer_config_.pitch_joint_scale[3] = -0.15;
+            stand_stabilizer_config_.pitch_joint_scale[4] = 1.0;
+            stand_stabilizer_config_.pitch_joint_scale[8] = 0.35;
+            stand_stabilizer_config_.pitch_joint_scale[9] = -0.15;
+            stand_stabilizer_config_.pitch_joint_scale[10] = 1.0;
         }
     }
-    if (stand_mpc_roll_joint_scale_.size() != static_cast<size_t>(joint_num_)) {
+    if (stand_stabilizer_config_.roll_joint_scale.size() != static_cast<size_t>(joint_num_)) {
         throw std::runtime_error("stand_mpc_roll_joint_scale must be empty or have the same size as joint_num");
     }
-    if (stand_mpc_pitch_joint_scale_.size() != static_cast<size_t>(joint_num_)) {
+    if (stand_stabilizer_config_.pitch_joint_scale.size() != static_cast<size_t>(joint_num_)) {
         throw std::runtime_error("stand_mpc_pitch_joint_scale must be empty or have the same size as joint_num");
     }
     if (!stand_kp_config.empty() && stand_kp_config.size() != static_cast<size_t>(joint_num_)) {
@@ -174,6 +177,8 @@ void InferenceNode::load_config() {
     if (!joint_limits_.empty() && joint_limits_.size() != static_cast<size_t>(joint_num_ * 2)) {
         throw std::runtime_error("joint_limits must be empty or contain 2 values per joint");
     }
+    stand_stabilizer_config_.joint_limits = joint_limits_;
+    stand_stabilizer_ = std::make_unique<StandingStabilizer>(stand_stabilizer_config_);
     for (size_t i = 0; i < usd2urdf_.size(); i++) {
         if (usd2urdf_[i] < 0 || usd2urdf_[i] >= joint_num_) {
             throw std::runtime_error("usd2urdf[" + std::to_string(i) + "] is out of joint range");
@@ -302,18 +307,18 @@ void InferenceNode::load_config() {
     print_vector<double>("joint_default_angle", joint_default_angle_);
     print_vector<double>("stand_joint_angle", stand_joint_angle_);
     RCLCPP_INFO(this->get_logger(), "stand_transition_time: %f", stand_transition_time_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_horizon: %d", stand_mpc_horizon_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_angle: %f", stand_mpc_q_angle_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_rate: %f", stand_mpc_q_rate_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_r_accel: %f", stand_mpc_r_accel_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_accel: %f", stand_mpc_max_accel_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_roll_gain: %f", stand_mpc_roll_gain_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_pitch_gain: %f", stand_mpc_pitch_gain_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_joint_correction: %f", stand_mpc_max_joint_correction_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_roll: %f", stand_mpc_target_roll_);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_pitch: %f", stand_mpc_target_pitch_);
-    print_vector<double>("stand_mpc_roll_joint_scale", stand_mpc_roll_joint_scale_);
-    print_vector<double>("stand_mpc_pitch_joint_scale", stand_mpc_pitch_joint_scale_);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_horizon: %d", stand_stabilizer_config_.horizon);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_angle: %f", stand_stabilizer_config_.q_angle);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_rate: %f", stand_stabilizer_config_.q_rate);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_r_accel: %f", stand_stabilizer_config_.r_accel);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_accel: %f", stand_stabilizer_config_.max_accel);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_roll_gain: %f", stand_stabilizer_config_.roll_gain);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_pitch_gain: %f", stand_stabilizer_config_.pitch_gain);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_joint_correction: %f", stand_stabilizer_config_.max_joint_correction);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_roll: %f", stand_stabilizer_config_.target_roll);
+    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_pitch: %f", stand_stabilizer_config_.target_pitch);
+    print_vector<double>("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
+    print_vector<double>("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
     print_vector<float>("stand_kp", stand_kp_);
     print_vector<float>("stand_kd", stand_kd_);
     print_vector<double>("joint_limits", joint_limits_);

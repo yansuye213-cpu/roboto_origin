@@ -257,41 +257,12 @@ void InferenceNode::start_stand_transition_locked() {
     }
 }
 
-float InferenceNode::solve_stand_mpc_axis(float angle, float rate, float target_angle) const {
-    const float h = std::max(dt_, 1.0e-4f);
-    Eigen::Matrix2f A;
-    A << 1.0f, h,
-         0.0f, 1.0f;
-    Eigen::Vector2f B(0.5f * h * h, h);
-    Eigen::Matrix2f Q = Eigen::Matrix2f::Zero();
-    Q(0, 0) = stand_mpc_q_angle_;
-    Q(1, 1) = stand_mpc_q_rate_;
-    const float R = std::max(stand_mpc_r_accel_, 1.0e-6f);
-    Eigen::Matrix2f P = Q;
-    Eigen::RowVector2f K = Eigen::RowVector2f::Zero();
-
-    for (int i = 0; i < stand_mpc_horizon_; i++) {
-        const Eigen::Vector2f PB = P * B;
-        const float denom = R + B.dot(PB);
-        K = (B.transpose() * P * A) / denom;
-        P = Q + A.transpose() * P * (A - B * K);
-    }
-
-    Eigen::Vector2f x(angle - target_angle, rate);
-    return std::clamp(-K.dot(x), -stand_mpc_max_accel_, stand_mpc_max_accel_);
-}
-
 void InferenceNode::apply_stand_action() {
     quat_buffer_ = robot_->get_quat();
     ang_vel_buffer_ = robot_->get_ang_vel();
-    Eigen::Quaternionf q_b2w(quat_buffer_[0], quat_buffer_[1], quat_buffer_[2], quat_buffer_[3]);
-    q_b2w.normalize();
-    const Eigen::Matrix3f R_b2w = q_b2w.toRotationMatrix();
-    const float roll = std::atan2(R_b2w(2, 1), R_b2w(2, 2));
-    const float pitch = std::asin(std::clamp(-R_b2w(2, 0), -1.0f, 1.0f));
-    Eigen::Vector3f gravity_w(0.0f, 0.0f, -1.0f);
-    Eigen::Vector3f gravity_b = q_b2w.inverse() * gravity_w;
-    if (gravity_b.z() > gravity_z_upper_) {
+    const StandingStabilizer::Measurement measurement =
+        stand_stabilizer_->measure(quat_buffer_, ang_vel_buffer_);
+    if (measurement.gravity_z > gravity_z_upper_) {
         RCLCPP_FATAL(this->get_logger(), "Robot fell down in stand mode! Shutting down...");
         rclcpp::shutdown();
         throw std::runtime_error("Robot fell down in stand mode");
@@ -324,26 +295,12 @@ void InferenceNode::apply_stand_action() {
         }
     }
 
-    const float roll_accel = solve_stand_mpc_axis(roll, ang_vel_buffer_[0], stand_mpc_target_roll_);
-    const float pitch_accel = solve_stand_mpc_axis(pitch, ang_vel_buffer_[1], stand_mpc_target_pitch_);
-    const float roll_correction = mpc_blend * std::clamp(roll_accel * stand_mpc_roll_gain_,
-                                                         -stand_mpc_max_joint_correction_,
-                                                         stand_mpc_max_joint_correction_);
-    const float pitch_correction = mpc_blend * std::clamp(pitch_accel * stand_mpc_pitch_gain_,
-                                                          -stand_mpc_max_joint_correction_,
-                                                          stand_mpc_max_joint_correction_);
+    const StandingStabilizer::Correction correction =
+        stand_stabilizer_->apply(measurement, mpc_blend, target);
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                          "stand mpc: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f roll_corr=%.4f pitch_corr=%.4f",
-                         roll, pitch, ang_vel_buffer_[0], ang_vel_buffer_[1], roll_correction, pitch_correction);
-    for (int i = 0; i < joint_num_; i++) {
-        target[i] += static_cast<float>(stand_mpc_roll_joint_scale_[i]) * roll_correction;
-        target[i] += static_cast<float>(stand_mpc_pitch_joint_scale_[i]) * pitch_correction;
-        if (!joint_limits_.empty()) {
-            target[i] = std::clamp(target[i],
-                                   static_cast<float>(joint_limits_[i * 2]),
-                                   static_cast<float>(joint_limits_[i * 2 + 1]));
-        }
-    }
+                         measurement.roll, measurement.pitch, measurement.wx, measurement.wy,
+                         correction.roll_correction, correction.pitch_correction);
 
     {
         std::unique_lock<std::mutex> lock(act_mutex_);

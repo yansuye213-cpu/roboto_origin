@@ -58,7 +58,12 @@ target_link_libraries(robot PUBLIC ${PUBLIC_DEPENDENCIES} utils cnpy
 pybind11_add_module(robot_py src/pybind_module.cpp)
 target_link_libraries(robot_py PUBLIC robot)
 
-add_executable(inference_node src/inference_node.cpp src/ros_interface.cpp src/obs_manager.cpp)
+add_executable(inference_node
+  src/inference_node.cpp
+  src/ros_interface.cpp
+  src/obs_manager.cpp
+  src/standing_stabilizer.cpp
+)
 target_include_directories(inference_node
   PUBLIC 
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
