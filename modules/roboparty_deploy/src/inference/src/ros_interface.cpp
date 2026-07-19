@@ -35,30 +35,22 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_joint_angle", std::vector<double>{});
     this->declare_parameter<float>("stand_transition_time", 1.5);
-    this->declare_parameter<std::string>("stand_control_backend", "joint_qp");
-    this->declare_parameter<int>("stand_mpc_horizon", 20);
-    this->declare_parameter<float>("stand_mpc_q_angle", 120.0);
-    this->declare_parameter<float>("stand_mpc_q_rate", 4.0);
-    this->declare_parameter<float>("stand_mpc_r_accel", 0.08);
-    this->declare_parameter<float>("stand_mpc_max_accel", 12.0);
-    this->declare_parameter<float>("stand_mpc_roll_gain", 0.003);
-    this->declare_parameter<float>("stand_mpc_pitch_gain", 0.003);
-    this->declare_parameter<float>("stand_mpc_max_joint_correction", 0.08);
-    this->declare_parameter<float>("stand_mpc_target_roll", 0.0);
-    this->declare_parameter<float>("stand_mpc_target_pitch", 0.0);
-    this->declare_parameter<bool>("stand_qp_enabled", false);
-    this->declare_parameter<int>("stand_qp_iterations", 32);
-    this->declare_parameter<float>("stand_qp_tracking_weight", 4.0);
-    this->declare_parameter<float>("stand_qp_shape_weight", 0.25);
-    this->declare_parameter<float>("stand_qp_regularization_weight", 0.02);
-    this->declare_parameter<float>("stand_qp_smooth_weight", 0.8);
-    this->declare_parameter<float>("stand_qp_max_joint_velocity", 4.0);
     this->declare_parameter<std::string>("stand_whole_body_model_path", "");
     this->declare_parameter<std::string>("stand_whole_body_base_link", "");
     this->declare_parameter<std::string>("stand_whole_body_left_foot_link", "");
     this->declare_parameter<std::string>("stand_whole_body_right_foot_link", "");
     this->declare_parameter<std::vector<std::string>>("stand_whole_body_joint_order", std::vector<std::string>{});
     this->declare_parameter<bool>("stand_validate_whole_body_model", false);
+    this->declare_parameter<int>("stand_wbc_mpc_horizon", 20);
+    this->declare_parameter<float>("stand_wbc_target_roll", 0.0);
+    this->declare_parameter<float>("stand_wbc_target_pitch", 0.0);
+    this->declare_parameter<float>("stand_wbc_mpc_orientation_weight", 120.0);
+    this->declare_parameter<float>("stand_wbc_mpc_angular_rate_weight", 1.4);
+    this->declare_parameter<float>("stand_wbc_mpc_com_weight", 30.0);
+    this->declare_parameter<float>("stand_wbc_mpc_com_velocity_weight", 4.0);
+    this->declare_parameter<float>("stand_wbc_mpc_control_weight", 0.15);
+    this->declare_parameter<float>("stand_wbc_mpc_max_angular_accel", 12.0);
+    this->declare_parameter<float>("stand_wbc_mpc_max_com_accel", 2.0);
     this->declare_parameter<bool>("stand_wbc_enable_torque", false);
     this->declare_parameter<int>("stand_wbc_qp_iterations", 24);
     this->declare_parameter<float>("stand_wbc_friction_coefficient", 0.45);
@@ -68,18 +60,9 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("stand_wbc_moment_tracking_weight", 0.03);
     this->declare_parameter<float>("stand_wbc_regularization_weight", 0.0001);
     this->declare_parameter<float>("stand_wbc_smooth_weight", 0.02);
-    this->declare_parameter<float>("stand_wbc_com_kp", 30.0);
-    this->declare_parameter<float>("stand_wbc_com_kd", 4.0);
-    this->declare_parameter<float>("stand_wbc_max_com_accel", 2.0);
-    this->declare_parameter<float>("stand_wbc_roll_moment_kp", 8.0);
-    this->declare_parameter<float>("stand_wbc_roll_moment_kd", 1.0);
-    this->declare_parameter<float>("stand_wbc_pitch_moment_kp", 8.0);
-    this->declare_parameter<float>("stand_wbc_pitch_moment_kd", 1.0);
     this->declare_parameter<float>("stand_wbc_max_body_moment", 8.0);
     this->declare_parameter<float>("stand_wbc_max_joint_torque", 0.6);
     this->declare_parameter<std::vector<double>>("stand_wbc_torque_joint_scale", std::vector<double>{});
-    this->declare_parameter<std::vector<double>>("stand_mpc_roll_joint_scale", std::vector<double>{});
-    this->declare_parameter<std::vector<double>>("stand_mpc_pitch_joint_scale", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_kp", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_kd", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("joint_limits", std::vector<double>{});
@@ -124,30 +107,22 @@ void InferenceNode::load_config() {
     this->get_parameter("joint_default_angle", joint_default_angle_);
     this->get_parameter("stand_joint_angle", stand_joint_angle_);
     this->get_parameter("stand_transition_time", stand_transition_time_);
-    this->get_parameter("stand_control_backend", stand_stabilizer_config_.control_backend);
-    this->get_parameter("stand_mpc_horizon", stand_stabilizer_config_.horizon);
-    this->get_parameter("stand_mpc_q_angle", stand_stabilizer_config_.q_angle);
-    this->get_parameter("stand_mpc_q_rate", stand_stabilizer_config_.q_rate);
-    this->get_parameter("stand_mpc_r_accel", stand_stabilizer_config_.r_accel);
-    this->get_parameter("stand_mpc_max_accel", stand_stabilizer_config_.max_accel);
-    this->get_parameter("stand_mpc_roll_gain", stand_stabilizer_config_.roll_gain);
-    this->get_parameter("stand_mpc_pitch_gain", stand_stabilizer_config_.pitch_gain);
-    this->get_parameter("stand_mpc_max_joint_correction", stand_stabilizer_config_.max_joint_correction);
-    this->get_parameter("stand_mpc_target_roll", stand_stabilizer_config_.target_roll);
-    this->get_parameter("stand_mpc_target_pitch", stand_stabilizer_config_.target_pitch);
-    this->get_parameter("stand_qp_enabled", stand_stabilizer_config_.qp_enabled);
-    this->get_parameter("stand_qp_iterations", stand_stabilizer_config_.qp_iterations);
-    this->get_parameter("stand_qp_tracking_weight", stand_stabilizer_config_.qp_tracking_weight);
-    this->get_parameter("stand_qp_shape_weight", stand_stabilizer_config_.qp_shape_weight);
-    this->get_parameter("stand_qp_regularization_weight", stand_stabilizer_config_.qp_regularization_weight);
-    this->get_parameter("stand_qp_smooth_weight", stand_stabilizer_config_.qp_smooth_weight);
-    this->get_parameter("stand_qp_max_joint_velocity", stand_stabilizer_config_.qp_max_joint_velocity);
     this->get_parameter("stand_whole_body_model_path", stand_stabilizer_config_.whole_body_model_path);
     this->get_parameter("stand_whole_body_base_link", stand_stabilizer_config_.whole_body_base_link);
     this->get_parameter("stand_whole_body_left_foot_link", stand_stabilizer_config_.whole_body_left_foot_link);
     this->get_parameter("stand_whole_body_right_foot_link", stand_stabilizer_config_.whole_body_right_foot_link);
     this->get_parameter("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
     this->get_parameter("stand_validate_whole_body_model", stand_stabilizer_config_.validate_whole_body_model);
+    this->get_parameter("stand_wbc_mpc_horizon", stand_stabilizer_config_.wbc_mpc_horizon);
+    this->get_parameter("stand_wbc_target_roll", stand_stabilizer_config_.wbc_target_roll);
+    this->get_parameter("stand_wbc_target_pitch", stand_stabilizer_config_.wbc_target_pitch);
+    this->get_parameter("stand_wbc_mpc_orientation_weight", stand_stabilizer_config_.wbc_mpc_orientation_weight);
+    this->get_parameter("stand_wbc_mpc_angular_rate_weight", stand_stabilizer_config_.wbc_mpc_angular_rate_weight);
+    this->get_parameter("stand_wbc_mpc_com_weight", stand_stabilizer_config_.wbc_mpc_com_weight);
+    this->get_parameter("stand_wbc_mpc_com_velocity_weight", stand_stabilizer_config_.wbc_mpc_com_velocity_weight);
+    this->get_parameter("stand_wbc_mpc_control_weight", stand_stabilizer_config_.wbc_mpc_control_weight);
+    this->get_parameter("stand_wbc_mpc_max_angular_accel", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
+    this->get_parameter("stand_wbc_mpc_max_com_accel", stand_stabilizer_config_.wbc_mpc_max_com_accel);
     this->get_parameter("stand_wbc_enable_torque", stand_stabilizer_config_.wbc_torque_enabled);
     this->get_parameter("stand_wbc_qp_iterations", stand_stabilizer_config_.wbc_qp_iterations);
     this->get_parameter("stand_wbc_friction_coefficient", stand_stabilizer_config_.wbc_friction_coefficient);
@@ -157,18 +132,9 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_moment_tracking_weight", stand_stabilizer_config_.wbc_moment_tracking_weight);
     this->get_parameter("stand_wbc_regularization_weight", stand_stabilizer_config_.wbc_regularization_weight);
     this->get_parameter("stand_wbc_smooth_weight", stand_stabilizer_config_.wbc_smooth_weight);
-    this->get_parameter("stand_wbc_com_kp", stand_stabilizer_config_.wbc_com_kp);
-    this->get_parameter("stand_wbc_com_kd", stand_stabilizer_config_.wbc_com_kd);
-    this->get_parameter("stand_wbc_max_com_accel", stand_stabilizer_config_.wbc_max_com_accel);
-    this->get_parameter("stand_wbc_roll_moment_kp", stand_stabilizer_config_.wbc_roll_moment_kp);
-    this->get_parameter("stand_wbc_roll_moment_kd", stand_stabilizer_config_.wbc_roll_moment_kd);
-    this->get_parameter("stand_wbc_pitch_moment_kp", stand_stabilizer_config_.wbc_pitch_moment_kp);
-    this->get_parameter("stand_wbc_pitch_moment_kd", stand_stabilizer_config_.wbc_pitch_moment_kd);
     this->get_parameter("stand_wbc_max_body_moment", stand_stabilizer_config_.wbc_max_body_moment);
     this->get_parameter("stand_wbc_max_joint_torque", stand_stabilizer_config_.wbc_max_joint_torque);
     this->get_parameter("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
-    this->get_parameter("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
-    this->get_parameter("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
     if (!stand_stabilizer_config_.whole_body_model_path.empty()) {
         const std::filesystem::path model_path(stand_stabilizer_config_.whole_body_model_path);
         if (model_path.is_relative()) {
@@ -201,31 +167,17 @@ void InferenceNode::load_config() {
     if (stand_transition_time_ <= 0.0f) {
         throw std::runtime_error("stand_transition_time must be positive");
     }
-    if (stand_stabilizer_config_.control_backend != "joint_qp" &&
-        stand_stabilizer_config_.control_backend != "whole_body_mpc") {
-        throw std::runtime_error("stand_control_backend must be joint_qp or whole_body_mpc");
-    }
     stand_stabilizer_config_.joint_num = joint_num_;
     stand_stabilizer_config_.dt = dt_;
-    if (stand_stabilizer_config_.horizon <= 0) {
-        throw std::runtime_error("stand_mpc_horizon must be positive");
-    }
-    if (stand_stabilizer_config_.q_angle < 0.0f || stand_stabilizer_config_.q_rate < 0.0f ||
-        stand_stabilizer_config_.r_accel <= 0.0f) {
-        throw std::runtime_error("stand MPC weights must be non-negative, and stand_mpc_r_accel must be positive");
-    }
-    if (stand_stabilizer_config_.max_accel <= 0.0f || stand_stabilizer_config_.max_joint_correction < 0.0f) {
-        throw std::runtime_error("stand MPC limits must be positive");
-    }
-    if (stand_stabilizer_config_.qp_iterations <= 0) {
-        throw std::runtime_error("stand_qp_iterations must be positive");
-    }
-    if (stand_stabilizer_config_.qp_tracking_weight < 0.0f ||
-        stand_stabilizer_config_.qp_shape_weight < 0.0f ||
-        stand_stabilizer_config_.qp_regularization_weight < 0.0f ||
-        stand_stabilizer_config_.qp_smooth_weight < 0.0f ||
-        stand_stabilizer_config_.qp_max_joint_velocity < 0.0f) {
-        throw std::runtime_error("stand QP parameters must be non-negative");
+    if (stand_stabilizer_config_.wbc_mpc_horizon <= 0 ||
+        stand_stabilizer_config_.wbc_mpc_orientation_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_angular_rate_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_com_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_com_velocity_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_control_weight <= 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_max_angular_accel < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_max_com_accel < 0.0f) {
+        throw std::runtime_error("stand WBC MPC parameters are invalid");
     }
     if (stand_stabilizer_config_.wbc_qp_iterations <= 0) {
         throw std::runtime_error("stand_wbc_qp_iterations must be positive");
@@ -237,11 +189,6 @@ void InferenceNode::load_config() {
         stand_stabilizer_config_.wbc_moment_tracking_weight < 0.0f ||
         stand_stabilizer_config_.wbc_regularization_weight < 0.0f ||
         stand_stabilizer_config_.wbc_smooth_weight < 0.0f ||
-        stand_stabilizer_config_.wbc_com_kp < 0.0f ||
-        stand_stabilizer_config_.wbc_com_kd < 0.0f ||
-        stand_stabilizer_config_.wbc_max_com_accel < 0.0f ||
-        stand_stabilizer_config_.wbc_roll_moment_kd < 0.0f ||
-        stand_stabilizer_config_.wbc_pitch_moment_kd < 0.0f ||
         stand_stabilizer_config_.wbc_max_body_moment < 0.0f ||
         stand_stabilizer_config_.wbc_max_joint_torque < 0.0f) {
         throw std::runtime_error("stand WBC parameters are invalid");
@@ -261,32 +208,6 @@ void InferenceNode::load_config() {
     }
     if (stand_stabilizer_config_.wbc_torque_joint_scale.size() != static_cast<size_t>(joint_num_)) {
         throw std::runtime_error("stand_wbc_torque_joint_scale must be empty or have the same size as joint_num");
-    }
-    if (stand_stabilizer_config_.roll_joint_scale.empty()) {
-        stand_stabilizer_config_.roll_joint_scale.assign(joint_num_, 0.0);
-        if (joint_num_ > 11) {
-            stand_stabilizer_config_.roll_joint_scale[1] = 0.35;
-            stand_stabilizer_config_.roll_joint_scale[5] = 1.0;
-            stand_stabilizer_config_.roll_joint_scale[7] = 0.35;
-            stand_stabilizer_config_.roll_joint_scale[11] = 1.0;
-        }
-    }
-    if (stand_stabilizer_config_.pitch_joint_scale.empty()) {
-        stand_stabilizer_config_.pitch_joint_scale.assign(joint_num_, 0.0);
-        if (joint_num_ > 10) {
-            stand_stabilizer_config_.pitch_joint_scale[2] = 0.35;
-            stand_stabilizer_config_.pitch_joint_scale[3] = -0.15;
-            stand_stabilizer_config_.pitch_joint_scale[4] = 1.0;
-            stand_stabilizer_config_.pitch_joint_scale[8] = 0.35;
-            stand_stabilizer_config_.pitch_joint_scale[9] = -0.15;
-            stand_stabilizer_config_.pitch_joint_scale[10] = 1.0;
-        }
-    }
-    if (stand_stabilizer_config_.roll_joint_scale.size() != static_cast<size_t>(joint_num_)) {
-        throw std::runtime_error("stand_mpc_roll_joint_scale must be empty or have the same size as joint_num");
-    }
-    if (stand_stabilizer_config_.pitch_joint_scale.size() != static_cast<size_t>(joint_num_)) {
-        throw std::runtime_error("stand_mpc_pitch_joint_scale must be empty or have the same size as joint_num");
     }
     if (!stand_kp_config.empty() && stand_kp_config.size() != static_cast<size_t>(joint_num_)) {
         throw std::runtime_error("stand_kp must be empty or have the same size as joint_num");
@@ -432,30 +353,22 @@ void InferenceNode::load_config() {
     print_vector<double>("joint_default_angle", joint_default_angle_);
     print_vector<double>("stand_joint_angle", stand_joint_angle_);
     RCLCPP_INFO(this->get_logger(), "stand_transition_time: %f", stand_transition_time_);
-    RCLCPP_INFO(this->get_logger(), "stand_control_backend: %s", stand_stabilizer_config_.control_backend.c_str());
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_horizon: %d", stand_stabilizer_config_.horizon);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_angle: %f", stand_stabilizer_config_.q_angle);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_q_rate: %f", stand_stabilizer_config_.q_rate);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_r_accel: %f", stand_stabilizer_config_.r_accel);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_accel: %f", stand_stabilizer_config_.max_accel);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_roll_gain: %f", stand_stabilizer_config_.roll_gain);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_pitch_gain: %f", stand_stabilizer_config_.pitch_gain);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_max_joint_correction: %f", stand_stabilizer_config_.max_joint_correction);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_roll: %f", stand_stabilizer_config_.target_roll);
-    RCLCPP_INFO(this->get_logger(), "stand_mpc_target_pitch: %f", stand_stabilizer_config_.target_pitch);
-    RCLCPP_INFO(this->get_logger(), "stand_qp_enabled: %s", stand_stabilizer_config_.qp_enabled ? "true" : "false");
-    RCLCPP_INFO(this->get_logger(), "stand_qp_iterations: %d", stand_stabilizer_config_.qp_iterations);
-    RCLCPP_INFO(this->get_logger(), "stand_qp_tracking_weight: %f", stand_stabilizer_config_.qp_tracking_weight);
-    RCLCPP_INFO(this->get_logger(), "stand_qp_shape_weight: %f", stand_stabilizer_config_.qp_shape_weight);
-    RCLCPP_INFO(this->get_logger(), "stand_qp_regularization_weight: %f", stand_stabilizer_config_.qp_regularization_weight);
-    RCLCPP_INFO(this->get_logger(), "stand_qp_smooth_weight: %f", stand_stabilizer_config_.qp_smooth_weight);
-    RCLCPP_INFO(this->get_logger(), "stand_qp_max_joint_velocity: %f", stand_stabilizer_config_.qp_max_joint_velocity);
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_model_path: %s", stand_stabilizer_config_.whole_body_model_path.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_base_link: %s", stand_stabilizer_config_.whole_body_base_link.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_left_foot_link: %s", stand_stabilizer_config_.whole_body_left_foot_link.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_right_foot_link: %s", stand_stabilizer_config_.whole_body_right_foot_link.c_str());
     print_vector<std::string>("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
     RCLCPP_INFO(this->get_logger(), "stand_validate_whole_body_model: %s", stand_stabilizer_config_.validate_whole_body_model ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_horizon: %d", stand_stabilizer_config_.wbc_mpc_horizon);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_target_roll: %f", stand_stabilizer_config_.wbc_target_roll);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_target_pitch: %f", stand_stabilizer_config_.wbc_target_pitch);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_orientation_weight: %f", stand_stabilizer_config_.wbc_mpc_orientation_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_angular_rate_weight: %f", stand_stabilizer_config_.wbc_mpc_angular_rate_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_com_weight: %f", stand_stabilizer_config_.wbc_mpc_com_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_com_velocity_weight: %f", stand_stabilizer_config_.wbc_mpc_com_velocity_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_control_weight: %f", stand_stabilizer_config_.wbc_mpc_control_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_angular_accel: %f", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_com_accel: %f", stand_stabilizer_config_.wbc_mpc_max_com_accel);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_enable_torque: %s", stand_stabilizer_config_.wbc_torque_enabled ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "stand_wbc_qp_iterations: %d", stand_stabilizer_config_.wbc_qp_iterations);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_friction_coefficient: %f", stand_stabilizer_config_.wbc_friction_coefficient);
@@ -466,18 +379,9 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_wbc_moment_tracking_weight: %f", stand_stabilizer_config_.wbc_moment_tracking_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_regularization_weight: %f", stand_stabilizer_config_.wbc_regularization_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_smooth_weight: %f", stand_stabilizer_config_.wbc_smooth_weight);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_com_kp: %f", stand_stabilizer_config_.wbc_com_kp);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_com_kd: %f", stand_stabilizer_config_.wbc_com_kd);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_max_com_accel: %f", stand_stabilizer_config_.wbc_max_com_accel);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_roll_moment_kp: %f", stand_stabilizer_config_.wbc_roll_moment_kp);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_roll_moment_kd: %f", stand_stabilizer_config_.wbc_roll_moment_kd);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_pitch_moment_kp: %f", stand_stabilizer_config_.wbc_pitch_moment_kp);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_pitch_moment_kd: %f", stand_stabilizer_config_.wbc_pitch_moment_kd);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_body_moment: %f", stand_stabilizer_config_.wbc_max_body_moment);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_joint_torque: %f", stand_stabilizer_config_.wbc_max_joint_torque);
     print_vector<double>("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
-    print_vector<double>("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
-    print_vector<double>("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
     print_vector<float>("stand_kp", stand_kp_);
     print_vector<float>("stand_kd", stand_kd_);
     print_vector<double>("joint_limits", joint_limits_);

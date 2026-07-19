@@ -41,6 +41,11 @@ def replace_scalar(text, key, value):
     return re.sub(pattern, rf"\g<1>{value}", text, count=1, flags=re.MULTILINE)
 
 
+def replace_bool(text, key, value):
+    pattern = rf"(^\s*{re.escape(key)}:\s*)(true|false)"
+    return re.sub(pattern, rf"\g<1>{'true' if value else 'false'}", text, count=1, flags=re.MULTILINE)
+
+
 def replace_stand_joint_angle(text, values):
     replacement = "        stand_joint_angle:\n" + format_vector(values) + "        stand_transition_time:"
     pattern = r"        stand_joint_angle:\n(?:.*\n)*?        stand_transition_time:"
@@ -66,15 +71,14 @@ def main():
     text = CONFIG.read_text()
     text = replace_stand_joint_angle(text, values)
     text = replace_scalar(text, "stand_transition_time", "0.3")
-    text = replace_scalar(text, "stand_mpc_roll_gain", "0.0")
-    text = replace_scalar(text, "stand_mpc_pitch_gain", "0.0")
-    text = replace_scalar(text, "stand_mpc_max_joint_correction", "0.0")
+    text = replace_bool(text, "stand_wbc_enable_torque", False)
+    text = replace_scalar(text, "stand_wbc_max_joint_torque", "0.0")
     CONFIG.write_text(text)
 
     active = [(i, v) for i, v in enumerate(values) if abs(v) > 1e-9]
     print(f"Updated {CONFIG}")
     print("Active stand_joint_angle offsets:", active if active else "none")
-    print("MPC gains disabled for this test.")
+    print("WBC torque disabled for this joint-bias test.")
 
 
 if __name__ == "__main__":

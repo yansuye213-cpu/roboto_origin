@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <pinocchio/algorithm/center-of-mass.hpp>
+#include <pinocchio/algorithm/crba.hpp>
 #include <pinocchio/algorithm/frames.hpp>
 #include <pinocchio/algorithm/jacobian.hpp>
 #include <pinocchio/algorithm/joint-configuration.hpp>
@@ -173,6 +174,11 @@ RobotModel::Kinematics RobotModel::compute_kinematics(
     pinocchio::updateFramePlacements(pin_model, pin_data);
     pinocchio::centerOfMass(pin_model, pin_data, q, v, false);
     pinocchio::computeJointJacobians(pin_model, pin_data, q);
+    pinocchio::computeJointJacobiansTimeVariation(pin_model, pin_data, q, v);
+    pinocchio::crba(pin_model, pin_data, q);
+    pin_data.M.triangularView<Eigen::StrictlyLower>() =
+        pin_data.M.transpose().triangularView<Eigen::StrictlyLower>();
+    pinocchio::nonLinearEffects(pin_model, pin_data, q, v);
 
     Kinematics output;
     output.com_position = pin_data.com[0];
@@ -185,12 +191,29 @@ RobotModel::Kinematics RobotModel::compute_kinematics(
     output.right_foot_pose.linear() = right_pose.rotation();
     output.right_foot_pose.translation() = right_pose.translation();
 
+    output.base_jacobian.setZero(6, pin_model.nv);
     output.left_foot_jacobian.setZero(6, pin_model.nv);
     output.right_foot_jacobian.setZero(6, pin_model.nv);
+    pinocchio::getFrameJacobian(pin_model, pin_data, impl_->base_frame_id,
+                                pinocchio::LOCAL_WORLD_ALIGNED, output.base_jacobian);
     pinocchio::getFrameJacobian(pin_model, pin_data, impl_->left_foot_frame_id,
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.left_foot_jacobian);
     pinocchio::getFrameJacobian(pin_model, pin_data, impl_->right_foot_frame_id,
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.right_foot_jacobian);
+
+    Eigen::Matrix<double, 6, Eigen::Dynamic> jacobian_dot;
+    jacobian_dot.setZero(6, pin_model.nv);
+    pinocchio::getFrameJacobianTimeVariation(pin_model, pin_data, impl_->base_frame_id,
+                                             pinocchio::LOCAL_WORLD_ALIGNED, jacobian_dot);
+    output.base_jacobian_dot_v = jacobian_dot * v;
+    pinocchio::getFrameJacobianTimeVariation(pin_model, pin_data, impl_->left_foot_frame_id,
+                                             pinocchio::LOCAL_WORLD_ALIGNED, jacobian_dot);
+    output.left_foot_jacobian_dot_v = jacobian_dot * v;
+    pinocchio::getFrameJacobianTimeVariation(pin_model, pin_data, impl_->right_foot_frame_id,
+                                             pinocchio::LOCAL_WORLD_ALIGNED, jacobian_dot);
+    output.right_foot_jacobian_dot_v = jacobian_dot * v;
+    output.mass_matrix = pin_data.M;
+    output.nonlinear_effects = pin_data.nle;
     return output;
 }
 
@@ -217,6 +240,10 @@ std::vector<double> RobotModel::configured_joint_torques(
         output[i] = generalized_tau[impl_->v_index_by_config_joint[i]];
     }
     return output;
+}
+
+const std::vector<int>& RobotModel::configured_joint_velocity_indices() const {
+    return impl_->v_index_by_config_joint;
 }
 
 void RobotModel::validate_config() const {

@@ -29,8 +29,14 @@ class RobotModel {
         Eigen::Vector3d com_velocity = Eigen::Vector3d::Zero();
         Eigen::Isometry3d left_foot_pose = Eigen::Isometry3d::Identity();
         Eigen::Isometry3d right_foot_pose = Eigen::Isometry3d::Identity();
+        Eigen::Matrix<double, 6, Eigen::Dynamic> base_jacobian;
         Eigen::Matrix<double, 6, Eigen::Dynamic> left_foot_jacobian;
         Eigen::Matrix<double, 6, Eigen::Dynamic> right_foot_jacobian;
+        Eigen::Matrix<double, 6, 1> base_jacobian_dot_v = Eigen::Matrix<double, 6, 1>::Zero();
+        Eigen::Matrix<double, 6, 1> left_foot_jacobian_dot_v = Eigen::Matrix<double, 6, 1>::Zero();
+        Eigen::Matrix<double, 6, 1> right_foot_jacobian_dot_v = Eigen::Matrix<double, 6, 1>::Zero();
+        Eigen::MatrixXd mass_matrix;
+        Eigen::VectorXd nonlinear_effects;
     };
 
     explicit RobotModel(Config config);
@@ -55,6 +61,7 @@ class RobotModel {
     Kinematics compute_kinematics(const Eigen::VectorXd& q, const Eigen::VectorXd& v) const;
     Eigen::VectorXd nonlinear_effects(const Eigen::VectorXd& q, const Eigen::VectorXd& v) const;
     std::vector<double> configured_joint_torques(const Eigen::VectorXd& generalized_tau) const;
+    const std::vector<int>& configured_joint_velocity_indices() const;
 
    private:
     struct Impl;

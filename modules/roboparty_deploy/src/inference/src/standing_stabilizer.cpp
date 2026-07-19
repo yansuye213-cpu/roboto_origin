@@ -3,7 +3,6 @@
 
 #include "standing_stabilizer.hpp"
 
-#include "stand_control/joint_qp_stand_controller.hpp"
 #include "whole_body_mpc/whole_body_mpc_controller.hpp"
 
 #include <Eigen/Geometry>
@@ -13,31 +12,21 @@
 #include <utility>
 
 StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config)) {
-    if (config_.control_backend != "joint_qp" && config_.control_backend != "whole_body_mpc") {
-        throw std::runtime_error("StandingStabilizer control_backend must be joint_qp or whole_body_mpc");
-    }
     if (config_.joint_num <= 0) {
         throw std::runtime_error("StandingStabilizer joint_num must be positive");
-    }
-    if (config_.horizon <= 0) {
-        throw std::runtime_error("StandingStabilizer horizon must be positive");
     }
     if (config_.dt <= 0.0f) {
         throw std::runtime_error("StandingStabilizer dt must be positive");
     }
-    if (config_.q_angle < 0.0f || config_.q_rate < 0.0f || config_.r_accel <= 0.0f) {
-        throw std::runtime_error("StandingStabilizer weights are invalid");
-    }
-    if (config_.max_accel <= 0.0f || config_.max_joint_correction < 0.0f) {
-        throw std::runtime_error("StandingStabilizer limits are invalid");
-    }
-    if (config_.qp_iterations <= 0) {
-        throw std::runtime_error("StandingStabilizer qp_iterations must be positive");
-    }
-    if (config_.qp_tracking_weight < 0.0f || config_.qp_shape_weight < 0.0f ||
-        config_.qp_regularization_weight < 0.0f || config_.qp_smooth_weight < 0.0f ||
-        config_.qp_max_joint_velocity < 0.0f) {
-        throw std::runtime_error("StandingStabilizer QP parameters are invalid");
+    if (config_.wbc_mpc_horizon <= 0 ||
+        config_.wbc_mpc_orientation_weight < 0.0f ||
+        config_.wbc_mpc_angular_rate_weight < 0.0f ||
+        config_.wbc_mpc_com_weight < 0.0f ||
+        config_.wbc_mpc_com_velocity_weight < 0.0f ||
+        config_.wbc_mpc_control_weight <= 0.0f ||
+        config_.wbc_mpc_max_angular_accel < 0.0f ||
+        config_.wbc_mpc_max_com_accel < 0.0f) {
+        throw std::runtime_error("StandingStabilizer WBC MPC parameters are invalid");
     }
     if (config_.wbc_qp_iterations <= 0) {
         throw std::runtime_error("StandingStabilizer wbc_qp_iterations must be positive");
@@ -49,20 +38,9 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.wbc_moment_tracking_weight < 0.0f ||
         config_.wbc_regularization_weight < 0.0f ||
         config_.wbc_smooth_weight < 0.0f ||
-        config_.wbc_com_kp < 0.0f ||
-        config_.wbc_com_kd < 0.0f ||
-        config_.wbc_max_com_accel < 0.0f ||
-        config_.wbc_roll_moment_kd < 0.0f ||
-        config_.wbc_pitch_moment_kd < 0.0f ||
         config_.wbc_max_body_moment < 0.0f ||
         config_.wbc_max_joint_torque < 0.0f) {
         throw std::runtime_error("StandingStabilizer WBC parameters are invalid");
-    }
-    if (config_.roll_joint_scale.size() != static_cast<size_t>(config_.joint_num)) {
-        throw std::runtime_error("StandingStabilizer roll_joint_scale size mismatch");
-    }
-    if (config_.pitch_joint_scale.size() != static_cast<size_t>(config_.joint_num)) {
-        throw std::runtime_error("StandingStabilizer pitch_joint_scale size mismatch");
     }
     if (!config_.joint_limits.empty() &&
         config_.joint_limits.size() != static_cast<size_t>(config_.joint_num * 2)) {
@@ -73,27 +51,15 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         throw std::runtime_error("StandingStabilizer wbc_torque_joint_scale size mismatch");
     }
 
-    const bool needs_whole_body_model = uses_whole_body_mpc() || config_.validate_whole_body_model;
-    if (needs_whole_body_model &&
-        config_.whole_body_joint_order.size() != static_cast<size_t>(config_.joint_num)) {
+    if (config_.whole_body_joint_order.size() != static_cast<size_t>(config_.joint_num)) {
         throw std::runtime_error("StandingStabilizer whole_body_joint_order size mismatch");
     }
 
-    if (needs_whole_body_model) {
-        whole_body_mpc_controller_ =
-            std::make_unique<whole_body_mpc::WholeBodyMpcController>(config_);
-    }
-    if (!uses_whole_body_mpc()) {
-        joint_qp_controller_ =
-            std::make_unique<stand_control::JointQpStandController>(config_);
-    }
+    whole_body_mpc_controller_ =
+        std::make_unique<whole_body_mpc::WholeBodyMpcController>(config_);
 }
 
 StandingStabilizer::~StandingStabilizer() = default;
-
-bool StandingStabilizer::uses_whole_body_mpc() const {
-    return config_.control_backend == "whole_body_mpc";
-}
 
 std::vector<std::string> StandingStabilizer::diagnostics() const {
     if (whole_body_mpc_controller_) {
@@ -103,9 +69,6 @@ std::vector<std::string> StandingStabilizer::diagnostics() const {
 }
 
 void StandingStabilizer::reset() {
-    if (joint_qp_controller_) {
-        joint_qp_controller_->reset();
-    }
     if (whole_body_mpc_controller_) {
         whole_body_mpc_controller_->reset();
     }
@@ -146,10 +109,6 @@ StandingStabilizer::Command StandingStabilizer::apply(
     const std::vector<float>& kp, const std::vector<float>& kd,
     const std::vector<float>& current_joint_position,
     const std::vector<float>& current_joint_velocity) {
-    if (joint_qp_controller_) {
-        return joint_qp_controller_->apply(measurement, blend, base_target, kp, kd,
-                                           current_joint_position, current_joint_velocity);
-    }
     if (whole_body_mpc_controller_) {
         return whole_body_mpc_controller_->apply(measurement, blend, base_target, kp, kd,
                                                  current_joint_position, current_joint_velocity);

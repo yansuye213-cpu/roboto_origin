@@ -305,15 +305,19 @@ void InferenceNode::apply_stand_action() {
                                  joint_pos_buffer_, joint_vel_buffer_);
     const StandingStabilizer::Correction& correction = command.correction;
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                         "stand ctrl[%s]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f roll_corr=%.4f pitch_corr=%.4f roll_out=%.4f pitch_out=%.4f qp=%d max_delta=%.4f wbc_fz=[%.1f, %.1f] wbc_moment=[%.2f, %.2f] max_tau=%.3f",
-                         stand_stabilizer_->config().control_backend.c_str(),
+                         "stand ctrl[whole_body_mpc]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f mpc_acc=[%.3f, %.3f, %.3f, %.3f] qp=%d wbc_fz=[%.1f, %.1f] wbc_moment_des=[%.2f, %.2f] wbc_moment_act=[%.2f, %.2f] max_tau=%.3f raw_tau=%.3f sat=%d tau_j=%d",
                          measurement.roll, measurement.pitch, measurement.wx, measurement.wy,
-                         correction.roll_correction, correction.pitch_correction,
-                         correction.roll_allocated, correction.pitch_allocated,
-                         correction.qp_used ? 1 : 0, correction.max_joint_delta,
+                         correction.mpc_roll_accel, correction.mpc_pitch_accel,
+                         correction.mpc_com_accel_x, correction.mpc_com_accel_y,
+                         correction.qp_used ? 1 : 0,
                          correction.wbc_left_normal_force, correction.wbc_right_normal_force,
                          correction.wbc_roll_moment, correction.wbc_pitch_moment,
-                         correction.wbc_max_joint_torque);
+                         correction.wbc_achieved_roll_moment,
+                         correction.wbc_achieved_pitch_moment,
+                         correction.wbc_max_joint_torque,
+                         correction.wbc_max_raw_joint_torque,
+                         correction.wbc_saturated_joint_count,
+                         correction.wbc_max_torque_joint_index);
 
     {
         std::unique_lock<std::mutex> lock(act_mutex_);

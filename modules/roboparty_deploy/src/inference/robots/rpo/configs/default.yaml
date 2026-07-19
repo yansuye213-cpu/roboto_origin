@@ -36,24 +36,6 @@ inference_node:
              0.0000, 0.0000, 0.0000, 0.0000,
              0.0000, 0.0000, 0.0000, 0.0000]
         stand_transition_time: 1.5
-        stand_control_backend: "whole_body_mpc"
-        stand_mpc_horizon: 20
-        stand_mpc_q_angle: 120.0
-        stand_mpc_q_rate: 1.4
-        stand_mpc_r_accel: 0.15
-        stand_mpc_max_accel: 12.0
-        stand_mpc_roll_gain: 0.0
-        stand_mpc_pitch_gain: 0.18
-        stand_mpc_max_joint_correction: 0.20
-        stand_mpc_target_roll: 0.0
-        stand_mpc_target_pitch: 0.085
-        stand_qp_enabled: true
-        stand_qp_iterations: 32
-        stand_qp_tracking_weight: 4.0
-        stand_qp_shape_weight: 0.25
-        stand_qp_regularization_weight: 0.02
-        stand_qp_smooth_weight: 0.8
-        stand_qp_max_joint_velocity: 4.0
         stand_whole_body_model_path: "src/urdf/Loobot614.urdf"
         stand_whole_body_base_link: "base_link"
         stand_whole_body_left_foot_link: "left_ankle_roll_link"
@@ -69,39 +51,30 @@ inference_node:
              "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
              "right_shoulder_yaw_joint", "right_elbow_pitch_joint"]
         stand_validate_whole_body_model: true
+        stand_wbc_mpc_horizon: 20
+        stand_wbc_target_roll: 0.0
+        stand_wbc_target_pitch: 0.085
+        stand_wbc_mpc_orientation_weight: 120.0
+        stand_wbc_mpc_angular_rate_weight: 1.4
+        stand_wbc_mpc_com_weight: 30.0
+        stand_wbc_mpc_com_velocity_weight: 4.0
+        stand_wbc_mpc_control_weight: 0.15
+        stand_wbc_mpc_max_angular_accel: 12.0
+        stand_wbc_mpc_max_com_accel: 2.0
         stand_wbc_enable_torque: false
         stand_wbc_qp_iterations: 24
         stand_wbc_friction_coefficient: 0.45
         stand_wbc_min_normal_force: 0.0
         stand_wbc_max_normal_force: 250.0
-        stand_wbc_force_tracking_weight: 1.0
-        stand_wbc_moment_tracking_weight: 0.03
+        stand_wbc_force_tracking_weight: 0.2000
+        stand_wbc_moment_tracking_weight: 50.0000
         stand_wbc_regularization_weight: 0.0001
         stand_wbc_smooth_weight: 0.02
-        stand_wbc_com_kp: 30.0
-        stand_wbc_com_kd: 4.0
-        stand_wbc_max_com_accel: 2.0
-        stand_wbc_roll_moment_kp: 8.0
-        stand_wbc_roll_moment_kd: 1.0
-        stand_wbc_pitch_moment_kp: 8.0
-        stand_wbc_pitch_moment_kd: 1.0
         stand_wbc_max_body_moment: 8.0
-        stand_wbc_max_joint_torque: 0.6
+        stand_wbc_max_joint_torque: 0.2000
         stand_wbc_torque_joint_scale:
             [1.0, 1.0, 0.3, 1.0, 0.0, 0.0,
              1.0, 1.0, 0.3, 1.0, 0.0, 0.0,
-             0.0,
-             0.0, 0.0, 0.0, 0.0,
-             0.0, 0.0, 0.0, 0.0]
-        stand_mpc_roll_joint_scale:
-            [0.0, 0.35, 0.0, 0.0, 0.0, 1.0,
-             0.0, 0.35, 0.0, 0.0, 0.0, 1.0,
-             0.0,
-             0.0, 0.0, 0.0, 0.0,
-             0.0, 0.0, 0.0, 0.0]
-        stand_mpc_pitch_joint_scale:
-            [-0.80, 0.0, 0.0, -0.50, 0.0, 0.0,
-             -0.80, 0.0, 0.0, -0.50, 0.0, 0.0,
              0.0,
              0.0, 0.0, 0.0, 0.0,
              0.0, 0.0, 0.0, 0.0]

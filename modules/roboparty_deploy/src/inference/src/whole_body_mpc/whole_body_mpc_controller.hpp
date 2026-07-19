@@ -6,6 +6,7 @@
 #include "standing_stabilizer.hpp"
 #include "whole_body_mpc/contact_force_qp.hpp"
 #include "whole_body_mpc/robot_model.hpp"
+#include "whole_body_mpc/stance_mpc.hpp"
 
 #include <memory>
 #include <string>
@@ -32,19 +33,33 @@ class WholeBodyMpcController {
     const std::string& model_path() const { return config_.whole_body_model_path; }
 
    private:
+    struct WbcQpResult {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+        std::vector<float> tau;
+        Eigen::Vector3d left_force = Eigen::Vector3d::Zero();
+        Eigen::Vector3d right_force = Eigen::Vector3d::Zero();
+        Eigen::Matrix<double, 6, 1> achieved_wrench = Eigen::Matrix<double, 6, 1>::Zero();
+        double max_raw_joint_torque = 0.0;
+        double max_command_joint_torque = 0.0;
+        int saturated_joint_count = 0;
+        int max_torque_joint_index = -1;
+    };
+
     void validate_model_config() const;
-    ContactForceQp::Input build_contact_qp_input(
+    StanceMpc::Input build_stance_mpc_input(
         const StandingStabilizer::Measurement& measurement) const;
-    std::vector<float> compute_joint_torque_command(
+    ContactForceQp::Input build_contact_qp_input(
+        const StanceMpc::Output& mpc_output) const;
+    WbcQpResult solve_stance_wbc_qp(
         const RobotModel::Kinematics& kinematics,
+        const StanceMpc::Output& mpc_output,
         const ContactForceQp::Result& contact_result,
-        const Eigen::VectorXd& q,
-        const Eigen::VectorXd& v,
-        float blend,
-        StandingStabilizer::Correction& correction) const;
+        float blend) const;
 
     StandingStabilizer::Config config_;
     std::unique_ptr<RobotModel> robot_model_;
+    std::unique_ptr<StanceMpc> stance_mpc_;
     std::unique_ptr<ContactForceQp> contact_force_qp_;
     RobotModel::Kinematics neutral_kinematics_;
     RobotModel::Kinematics latest_kinematics_;
