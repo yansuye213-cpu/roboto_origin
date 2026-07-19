@@ -17,7 +17,9 @@ class JointQpStandController {
     StandingStabilizer::Command apply(const StandingStabilizer::Measurement& measurement, float blend,
                                       const std::vector<float>& base_target,
                                       const std::vector<float>& kp,
-                                      const std::vector<float>& kd);
+                                      const std::vector<float>& kd,
+                                      const std::vector<float>& current_joint_position,
+                                      const std::vector<float>& current_joint_velocity);
 
    private:
     float solve_axis(float angle, float rate, float target_angle) const;

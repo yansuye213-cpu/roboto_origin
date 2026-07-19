@@ -22,7 +22,10 @@ void JointQpStandController::reset() {
 StandingStabilizer::Command JointQpStandController::apply(
     const StandingStabilizer::Measurement& measurement, float blend,
     const std::vector<float>& base_target, const std::vector<float>& kp,
-    const std::vector<float>& kd) {
+    const std::vector<float>& kd, const std::vector<float>& current_joint_position,
+    const std::vector<float>& current_joint_velocity) {
+    (void)current_joint_position;
+    (void)current_joint_velocity;
     if (base_target.size() != static_cast<size_t>(config_.joint_num)) {
         throw std::runtime_error("JointQpStandController base_target size mismatch");
     }

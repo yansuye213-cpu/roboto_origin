@@ -263,6 +263,8 @@ void InferenceNode::start_stand_transition_locked() {
 void InferenceNode::apply_stand_action() {
     quat_buffer_ = robot_->get_quat();
     ang_vel_buffer_ = robot_->get_ang_vel();
+    joint_pos_buffer_ = robot_->get_joint_q();
+    joint_vel_buffer_ = robot_->get_joint_vel();
     const StandingStabilizer::Measurement measurement =
         stand_stabilizer_->measure(quat_buffer_, ang_vel_buffer_);
     if (measurement.gravity_z > gravity_z_upper_) {
@@ -299,7 +301,8 @@ void InferenceNode::apply_stand_action() {
     }
 
     const StandingStabilizer::Command command =
-        stand_stabilizer_->apply(measurement, mpc_blend, target, stand_kp_, stand_kd_);
+        stand_stabilizer_->apply(measurement, mpc_blend, target, stand_kp_, stand_kd_,
+                                 joint_pos_buffer_, joint_vel_buffer_);
     const StandingStabilizer::Correction& correction = command.correction;
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
                          "stand ctrl[%s]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f roll_corr=%.4f pitch_corr=%.4f roll_out=%.4f pitch_out=%.4f qp=%d max_delta=%.4f",

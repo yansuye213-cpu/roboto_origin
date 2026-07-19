@@ -28,6 +28,7 @@ find_package(roboparty_motors REQUIRED)
 find_package(roboparty_imu REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 REQUIRED)
+find_package(pinocchio REQUIRED)
 
 option(YAML_BUILD_SHARED_LIBS "Build shared library" OFF)
 option(YAML_CPP_BUILD_TESTS "Build tests" OFF)
@@ -36,6 +37,16 @@ add_subdirectory(thirdparty)
 
 set(PUBLIC_DEPENDENCIES
     ${Boost_LIBRARIES} pthread Eigen3::Eigen fmt::fmt spdlog::spdlog ${ONNXRUNTIME_LIB_FILE} yaml-cpp)
+
+set(PINOCCHIO_DEPENDENCIES)
+set(PINOCCHIO_INCLUDE_DIRS)
+message(STATUS "Pinocchio found: enabling whole-body robot model")
+if(TARGET pinocchio::pinocchio)
+  list(APPEND PINOCCHIO_DEPENDENCIES pinocchio::pinocchio)
+else()
+  list(APPEND PINOCCHIO_DEPENDENCIES ${pinocchio_LIBRARIES})
+  list(APPEND PINOCCHIO_INCLUDE_DIRS ${pinocchio_INCLUDE_DIRS})
+endif()
 
 add_subdirectory(src)
 
@@ -64,6 +75,7 @@ add_executable(inference_node
   src/obs_manager.cpp
   src/standing_stabilizer.cpp
   src/stand_control/joint_qp_stand_controller.cpp
+  src/whole_body_mpc/robot_model.cpp
   src/whole_body_mpc/whole_body_mpc_controller.cpp
 )
 target_include_directories(inference_node
@@ -73,8 +85,9 @@ target_include_directories(inference_node
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   ${ONNXRUNTIME_INCLUDE_DIR}
   ${CNPY_INCLUDE_DIR}
+  ${PINOCCHIO_INCLUDE_DIRS}
 )
-target_link_libraries(inference_node PUBLIC ${PUBLIC_DEPENDENCIES} utils cnpy robot)
+target_link_libraries(inference_node PUBLIC ${PUBLIC_DEPENDENCIES} ${PINOCCHIO_DEPENDENCIES} utils cnpy robot)
 ament_target_dependencies(inference_node PUBLIC rclcpp sensor_msgs geometry_msgs std_srvs)
 
 set_target_properties(inference_node PROPERTIES LINK_FLAGS "-Wl,--no-as-needed")

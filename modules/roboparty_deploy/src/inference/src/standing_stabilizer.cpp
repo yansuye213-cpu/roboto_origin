@@ -97,17 +97,25 @@ StandingStabilizer::Measurement StandingStabilizer::measure(
     measurement.wx = angular_velocity.size() > 0 ? angular_velocity[0] : 0.0f;
     measurement.wy = angular_velocity.size() > 1 ? angular_velocity[1] : 0.0f;
     measurement.gravity_z = gravity_b.z();
+    measurement.qw = q_b2w.w();
+    measurement.qx = q_b2w.x();
+    measurement.qy = q_b2w.y();
+    measurement.qz = q_b2w.z();
     return measurement;
 }
 
 StandingStabilizer::Command StandingStabilizer::apply(
     const Measurement& measurement, float blend, const std::vector<float>& base_target,
-    const std::vector<float>& kp, const std::vector<float>& kd) {
+    const std::vector<float>& kp, const std::vector<float>& kd,
+    const std::vector<float>& current_joint_position,
+    const std::vector<float>& current_joint_velocity) {
     if (joint_qp_controller_) {
-        return joint_qp_controller_->apply(measurement, blend, base_target, kp, kd);
+        return joint_qp_controller_->apply(measurement, blend, base_target, kp, kd,
+                                           current_joint_position, current_joint_velocity);
     }
     if (whole_body_mpc_controller_) {
-        return whole_body_mpc_controller_->apply(measurement, blend, base_target, kp, kd);
+        return whole_body_mpc_controller_->apply(measurement, blend, base_target, kp, kd,
+                                                 current_joint_position, current_joint_velocity);
     }
     throw std::runtime_error("StandingStabilizer has no active backend");
 }

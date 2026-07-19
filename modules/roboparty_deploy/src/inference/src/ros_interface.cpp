@@ -57,6 +57,7 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::string>("stand_whole_body_base_link", "");
     this->declare_parameter<std::string>("stand_whole_body_left_foot_link", "");
     this->declare_parameter<std::string>("stand_whole_body_right_foot_link", "");
+    this->declare_parameter<std::vector<std::string>>("stand_whole_body_joint_order", std::vector<std::string>{});
     this->declare_parameter<std::vector<double>>("stand_mpc_roll_joint_scale", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_mpc_pitch_joint_scale", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_kp", std::vector<double>{});
@@ -125,8 +126,16 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_whole_body_base_link", stand_stabilizer_config_.whole_body_base_link);
     this->get_parameter("stand_whole_body_left_foot_link", stand_stabilizer_config_.whole_body_left_foot_link);
     this->get_parameter("stand_whole_body_right_foot_link", stand_stabilizer_config_.whole_body_right_foot_link);
+    this->get_parameter("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
     this->get_parameter("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
     this->get_parameter("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
+    if (!stand_stabilizer_config_.whole_body_model_path.empty()) {
+        const std::filesystem::path model_path(stand_stabilizer_config_.whole_body_model_path);
+        if (model_path.is_relative()) {
+            stand_stabilizer_config_.whole_body_model_path =
+                (std::filesystem::path(ROOT_DIR) / model_path).lexically_normal().string();
+        }
+    }
     std::vector<double> stand_kp_config;
     std::vector<double> stand_kd_config;
     this->get_parameter("stand_kp", stand_kp_config);
@@ -367,6 +376,7 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_base_link: %s", stand_stabilizer_config_.whole_body_base_link.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_left_foot_link: %s", stand_stabilizer_config_.whole_body_left_foot_link.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_right_foot_link: %s", stand_stabilizer_config_.whole_body_right_foot_link.c_str());
+    print_vector<std::string>("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
     print_vector<double>("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
     print_vector<double>("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
     print_vector<float>("stand_kp", stand_kp_);

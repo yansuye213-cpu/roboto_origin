@@ -54,10 +54,20 @@ inference_node:
         stand_qp_regularization_weight: 0.02
         stand_qp_smooth_weight: 0.8
         stand_qp_max_joint_velocity: 4.0
-        stand_whole_body_model_path: "/home/yansuye/Projects/loobot/urdf/Loobot614.urdf"
-        stand_whole_body_base_link: ""
-        stand_whole_body_left_foot_link: ""
-        stand_whole_body_right_foot_link: ""
+        stand_whole_body_model_path: "src/urdf/Loobot614.urdf"
+        stand_whole_body_base_link: "base_link"
+        stand_whole_body_left_foot_link: "left_ankle_roll_link"
+        stand_whole_body_right_foot_link: "right_ankle_roll_link"
+        stand_whole_body_joint_order:
+            ["left_leg_pitch_joint", "left_leg_roll_joint", "left_leg_yaw_joint",
+             "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+             "right_leg_pitch_joint", "right_leg_roll_joint", "right_leg_yaw_joint",
+             "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+             "head_yaw_joint",
+             "left_shoulder_pitch_joint", "left_shoulder_roll_joint",
+             "left_shoulder_yaw_joint", "left_elbow_pitch_joint",
+             "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
+             "right_shoulder_yaw_joint", "right_elbow_pitch_joint"]
         stand_mpc_roll_joint_scale:
             [0.0, 0.35, 0.0, 0.0, 0.0, 1.0,
              0.0, 0.35, 0.0, 0.0, 0.0, 1.0,

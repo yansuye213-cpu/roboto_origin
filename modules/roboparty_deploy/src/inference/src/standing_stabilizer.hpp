@@ -42,6 +42,7 @@ class StandingStabilizer {
         std::string whole_body_base_link;
         std::string whole_body_left_foot_link;
         std::string whole_body_right_foot_link;
+        std::vector<std::string> whole_body_joint_order;
         std::vector<double> roll_joint_scale;
         std::vector<double> pitch_joint_scale;
         std::vector<double> joint_limits;
@@ -53,6 +54,10 @@ class StandingStabilizer {
         float wx = 0.0f;
         float wy = 0.0f;
         float gravity_z = -1.0f;
+        float qw = 1.0f;
+        float qx = 0.0f;
+        float qy = 0.0f;
+        float qz = 0.0f;
     };
 
     struct Correction {
@@ -83,7 +88,9 @@ class StandingStabilizer {
     void reset();
     Measurement measure(const std::vector<float>& quat, const std::vector<float>& angular_velocity) const;
     Command apply(const Measurement& measurement, float blend, const std::vector<float>& base_target,
-                  const std::vector<float>& kp, const std::vector<float>& kd);
+                  const std::vector<float>& kp, const std::vector<float>& kd,
+                  const std::vector<float>& current_joint_position,
+                  const std::vector<float>& current_joint_velocity);
 
    private:
     bool uses_whole_body_mpc() const;
