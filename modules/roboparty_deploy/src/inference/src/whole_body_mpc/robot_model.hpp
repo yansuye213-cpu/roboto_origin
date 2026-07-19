@@ -40,6 +40,7 @@ class RobotModel {
     const std::vector<std::string>& configured_joint_order() const { return config_.joint_order; }
     int nq() const;
     int nv() const;
+    double total_mass() const;
 
     Eigen::VectorXd neutral_configuration() const;
     Eigen::VectorXd zero_velocity() const;
@@ -50,6 +51,8 @@ class RobotModel {
                                   const Eigen::Vector3d& base_linear_velocity,
                                   const Eigen::Vector3d& base_angular_velocity) const;
     Kinematics compute_kinematics(const Eigen::VectorXd& q, const Eigen::VectorXd& v) const;
+    Eigen::VectorXd nonlinear_effects(const Eigen::VectorXd& q, const Eigen::VectorXd& v) const;
+    std::vector<double> configured_joint_torques(const Eigen::VectorXd& generalized_tau) const;
 
    private:
     struct Impl;

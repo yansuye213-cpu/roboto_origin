@@ -39,6 +39,25 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.qp_max_joint_velocity < 0.0f) {
         throw std::runtime_error("StandingStabilizer QP parameters are invalid");
     }
+    if (config_.wbc_qp_iterations <= 0) {
+        throw std::runtime_error("StandingStabilizer wbc_qp_iterations must be positive");
+    }
+    if (config_.wbc_friction_coefficient < 0.0f ||
+        config_.wbc_min_normal_force < 0.0f ||
+        config_.wbc_max_normal_force < config_.wbc_min_normal_force ||
+        config_.wbc_force_tracking_weight < 0.0f ||
+        config_.wbc_moment_tracking_weight < 0.0f ||
+        config_.wbc_regularization_weight < 0.0f ||
+        config_.wbc_smooth_weight < 0.0f ||
+        config_.wbc_com_kp < 0.0f ||
+        config_.wbc_com_kd < 0.0f ||
+        config_.wbc_max_com_accel < 0.0f ||
+        config_.wbc_roll_moment_kd < 0.0f ||
+        config_.wbc_pitch_moment_kd < 0.0f ||
+        config_.wbc_max_body_moment < 0.0f ||
+        config_.wbc_max_joint_torque < 0.0f) {
+        throw std::runtime_error("StandingStabilizer WBC parameters are invalid");
+    }
     if (config_.roll_joint_scale.size() != static_cast<size_t>(config_.joint_num)) {
         throw std::runtime_error("StandingStabilizer roll_joint_scale size mismatch");
     }
@@ -49,11 +68,22 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.joint_limits.size() != static_cast<size_t>(config_.joint_num * 2)) {
         throw std::runtime_error("StandingStabilizer joint_limits size mismatch");
     }
+    if (!config_.wbc_torque_joint_scale.empty() &&
+        config_.wbc_torque_joint_scale.size() != static_cast<size_t>(config_.joint_num)) {
+        throw std::runtime_error("StandingStabilizer wbc_torque_joint_scale size mismatch");
+    }
 
-    if (uses_whole_body_mpc()) {
+    const bool needs_whole_body_model = uses_whole_body_mpc() || config_.validate_whole_body_model;
+    if (needs_whole_body_model &&
+        config_.whole_body_joint_order.size() != static_cast<size_t>(config_.joint_num)) {
+        throw std::runtime_error("StandingStabilizer whole_body_joint_order size mismatch");
+    }
+
+    if (needs_whole_body_model) {
         whole_body_mpc_controller_ =
             std::make_unique<whole_body_mpc::WholeBodyMpcController>(config_);
-    } else {
+    }
+    if (!uses_whole_body_mpc()) {
         joint_qp_controller_ =
             std::make_unique<stand_control::JointQpStandController>(config_);
     }
@@ -63,6 +93,13 @@ StandingStabilizer::~StandingStabilizer() = default;
 
 bool StandingStabilizer::uses_whole_body_mpc() const {
     return config_.control_backend == "whole_body_mpc";
+}
+
+std::vector<std::string> StandingStabilizer::diagnostics() const {
+    if (whole_body_mpc_controller_) {
+        return whole_body_mpc_controller_->diagnostics();
+    }
+    return {};
 }
 
 void StandingStabilizer::reset() {

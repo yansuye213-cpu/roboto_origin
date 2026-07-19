@@ -43,6 +43,26 @@ class StandingStabilizer {
         std::string whole_body_left_foot_link;
         std::string whole_body_right_foot_link;
         std::vector<std::string> whole_body_joint_order;
+        bool validate_whole_body_model = false;
+        bool wbc_torque_enabled = false;
+        int wbc_qp_iterations = 24;
+        float wbc_friction_coefficient = 0.45f;
+        float wbc_min_normal_force = 0.0f;
+        float wbc_max_normal_force = 250.0f;
+        float wbc_force_tracking_weight = 1.0f;
+        float wbc_moment_tracking_weight = 0.03f;
+        float wbc_regularization_weight = 1.0e-4f;
+        float wbc_smooth_weight = 0.02f;
+        float wbc_com_kp = 30.0f;
+        float wbc_com_kd = 4.0f;
+        float wbc_max_com_accel = 2.0f;
+        float wbc_roll_moment_kp = 8.0f;
+        float wbc_roll_moment_kd = 1.0f;
+        float wbc_pitch_moment_kp = 8.0f;
+        float wbc_pitch_moment_kd = 1.0f;
+        float wbc_max_body_moment = 8.0f;
+        float wbc_max_joint_torque = 0.6f;
+        std::vector<double> wbc_torque_joint_scale;
         std::vector<double> roll_joint_scale;
         std::vector<double> pitch_joint_scale;
         std::vector<double> joint_limits;
@@ -68,6 +88,11 @@ class StandingStabilizer {
         float roll_allocated = 0.0f;
         float pitch_allocated = 0.0f;
         float max_joint_delta = 0.0f;
+        float wbc_left_normal_force = 0.0f;
+        float wbc_right_normal_force = 0.0f;
+        float wbc_roll_moment = 0.0f;
+        float wbc_pitch_moment = 0.0f;
+        float wbc_max_joint_torque = 0.0f;
         bool qp_used = false;
     };
 
@@ -84,6 +109,7 @@ class StandingStabilizer {
     ~StandingStabilizer();
 
     const Config& config() const { return config_; }
+    std::vector<std::string> diagnostics() const;
 
     void reset();
     Measurement measure(const std::vector<float>& quat, const std::vector<float>& angular_velocity) const;

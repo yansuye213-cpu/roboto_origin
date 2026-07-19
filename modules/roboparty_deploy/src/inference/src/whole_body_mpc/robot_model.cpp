@@ -14,6 +14,7 @@
 #include <pinocchio/algorithm/jacobian.hpp>
 #include <pinocchio/algorithm/joint-configuration.hpp>
 #include <pinocchio/algorithm/kinematics.hpp>
+#include <pinocchio/algorithm/rnea.hpp>
 #include <pinocchio/multibody/data.hpp>
 #include <pinocchio/multibody/model.hpp>
 #include <pinocchio/parsers/urdf.hpp>
@@ -28,6 +29,7 @@ struct RobotModel::Impl {
     pinocchio::FrameIndex right_foot_frame_id = 0;
     std::vector<int> q_index_by_config_joint;
     std::vector<int> v_index_by_config_joint;
+    double total_mass = 0.0;
 };
 
 RobotModel::RobotModel(Config config) : config_(std::move(config)) {
@@ -40,6 +42,9 @@ RobotModel::RobotModel(Config config) : config_(std::move(config)) {
         pinocchio::urdf::buildModel(config_.urdf_path, impl_->model);
     }
     impl_->data = pinocchio::Data(impl_->model);
+    for (const auto& inertia : impl_->model.inertias) {
+        impl_->total_mass += inertia.mass();
+    }
 
     impl_->base_frame_id = impl_->model.getFrameId(config_.base_link);
     impl_->left_foot_frame_id = impl_->model.getFrameId(config_.left_foot_frame);
@@ -90,6 +95,10 @@ int RobotModel::nq() const {
 
 int RobotModel::nv() const {
     return impl_->model.nv;
+}
+
+double RobotModel::total_mass() const {
+    return impl_->total_mass;
 }
 
 Eigen::VectorXd RobotModel::neutral_configuration() const {
@@ -167,6 +176,29 @@ RobotModel::Kinematics RobotModel::compute_kinematics(
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.left_foot_jacobian);
     pinocchio::getFrameJacobian(impl_->model, impl_->data, impl_->right_foot_frame_id,
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.right_foot_jacobian);
+    return output;
+}
+
+Eigen::VectorXd RobotModel::nonlinear_effects(
+    const Eigen::VectorXd& q, const Eigen::VectorXd& v) const {
+    if (q.size() != impl_->model.nq) {
+        throw std::runtime_error("q size does not match Pinocchio model nq");
+    }
+    if (v.size() != impl_->model.nv) {
+        throw std::runtime_error("v size does not match Pinocchio model nv");
+    }
+    return pinocchio::nonLinearEffects(impl_->model, impl_->data, q, v);
+}
+
+std::vector<double> RobotModel::configured_joint_torques(
+    const Eigen::VectorXd& generalized_tau) const {
+    if (generalized_tau.size() != impl_->model.nv) {
+        throw std::runtime_error("generalized_tau size does not match Pinocchio model nv");
+    }
+    std::vector<double> output(config_.joint_order.size(), 0.0);
+    for (size_t i = 0; i < output.size(); i++) {
+        output[i] = generalized_tau[impl_->v_index_by_config_joint[i]];
+    }
     return output;
 }
 

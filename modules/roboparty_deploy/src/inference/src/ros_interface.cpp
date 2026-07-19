@@ -58,6 +58,26 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::string>("stand_whole_body_left_foot_link", "");
     this->declare_parameter<std::string>("stand_whole_body_right_foot_link", "");
     this->declare_parameter<std::vector<std::string>>("stand_whole_body_joint_order", std::vector<std::string>{});
+    this->declare_parameter<bool>("stand_validate_whole_body_model", false);
+    this->declare_parameter<bool>("stand_wbc_enable_torque", false);
+    this->declare_parameter<int>("stand_wbc_qp_iterations", 24);
+    this->declare_parameter<float>("stand_wbc_friction_coefficient", 0.45);
+    this->declare_parameter<float>("stand_wbc_min_normal_force", 0.0);
+    this->declare_parameter<float>("stand_wbc_max_normal_force", 250.0);
+    this->declare_parameter<float>("stand_wbc_force_tracking_weight", 1.0);
+    this->declare_parameter<float>("stand_wbc_moment_tracking_weight", 0.03);
+    this->declare_parameter<float>("stand_wbc_regularization_weight", 0.0001);
+    this->declare_parameter<float>("stand_wbc_smooth_weight", 0.02);
+    this->declare_parameter<float>("stand_wbc_com_kp", 30.0);
+    this->declare_parameter<float>("stand_wbc_com_kd", 4.0);
+    this->declare_parameter<float>("stand_wbc_max_com_accel", 2.0);
+    this->declare_parameter<float>("stand_wbc_roll_moment_kp", 8.0);
+    this->declare_parameter<float>("stand_wbc_roll_moment_kd", 1.0);
+    this->declare_parameter<float>("stand_wbc_pitch_moment_kp", 8.0);
+    this->declare_parameter<float>("stand_wbc_pitch_moment_kd", 1.0);
+    this->declare_parameter<float>("stand_wbc_max_body_moment", 8.0);
+    this->declare_parameter<float>("stand_wbc_max_joint_torque", 0.6);
+    this->declare_parameter<std::vector<double>>("stand_wbc_torque_joint_scale", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_mpc_roll_joint_scale", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_mpc_pitch_joint_scale", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_kp", std::vector<double>{});
@@ -127,6 +147,26 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_whole_body_left_foot_link", stand_stabilizer_config_.whole_body_left_foot_link);
     this->get_parameter("stand_whole_body_right_foot_link", stand_stabilizer_config_.whole_body_right_foot_link);
     this->get_parameter("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
+    this->get_parameter("stand_validate_whole_body_model", stand_stabilizer_config_.validate_whole_body_model);
+    this->get_parameter("stand_wbc_enable_torque", stand_stabilizer_config_.wbc_torque_enabled);
+    this->get_parameter("stand_wbc_qp_iterations", stand_stabilizer_config_.wbc_qp_iterations);
+    this->get_parameter("stand_wbc_friction_coefficient", stand_stabilizer_config_.wbc_friction_coefficient);
+    this->get_parameter("stand_wbc_min_normal_force", stand_stabilizer_config_.wbc_min_normal_force);
+    this->get_parameter("stand_wbc_max_normal_force", stand_stabilizer_config_.wbc_max_normal_force);
+    this->get_parameter("stand_wbc_force_tracking_weight", stand_stabilizer_config_.wbc_force_tracking_weight);
+    this->get_parameter("stand_wbc_moment_tracking_weight", stand_stabilizer_config_.wbc_moment_tracking_weight);
+    this->get_parameter("stand_wbc_regularization_weight", stand_stabilizer_config_.wbc_regularization_weight);
+    this->get_parameter("stand_wbc_smooth_weight", stand_stabilizer_config_.wbc_smooth_weight);
+    this->get_parameter("stand_wbc_com_kp", stand_stabilizer_config_.wbc_com_kp);
+    this->get_parameter("stand_wbc_com_kd", stand_stabilizer_config_.wbc_com_kd);
+    this->get_parameter("stand_wbc_max_com_accel", stand_stabilizer_config_.wbc_max_com_accel);
+    this->get_parameter("stand_wbc_roll_moment_kp", stand_stabilizer_config_.wbc_roll_moment_kp);
+    this->get_parameter("stand_wbc_roll_moment_kd", stand_stabilizer_config_.wbc_roll_moment_kd);
+    this->get_parameter("stand_wbc_pitch_moment_kp", stand_stabilizer_config_.wbc_pitch_moment_kp);
+    this->get_parameter("stand_wbc_pitch_moment_kd", stand_stabilizer_config_.wbc_pitch_moment_kd);
+    this->get_parameter("stand_wbc_max_body_moment", stand_stabilizer_config_.wbc_max_body_moment);
+    this->get_parameter("stand_wbc_max_joint_torque", stand_stabilizer_config_.wbc_max_joint_torque);
+    this->get_parameter("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
     this->get_parameter("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
     this->get_parameter("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
     if (!stand_stabilizer_config_.whole_body_model_path.empty()) {
@@ -187,6 +227,41 @@ void InferenceNode::load_config() {
         stand_stabilizer_config_.qp_max_joint_velocity < 0.0f) {
         throw std::runtime_error("stand QP parameters must be non-negative");
     }
+    if (stand_stabilizer_config_.wbc_qp_iterations <= 0) {
+        throw std::runtime_error("stand_wbc_qp_iterations must be positive");
+    }
+    if (stand_stabilizer_config_.wbc_friction_coefficient < 0.0f ||
+        stand_stabilizer_config_.wbc_min_normal_force < 0.0f ||
+        stand_stabilizer_config_.wbc_max_normal_force < stand_stabilizer_config_.wbc_min_normal_force ||
+        stand_stabilizer_config_.wbc_force_tracking_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_moment_tracking_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_regularization_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_smooth_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_com_kp < 0.0f ||
+        stand_stabilizer_config_.wbc_com_kd < 0.0f ||
+        stand_stabilizer_config_.wbc_max_com_accel < 0.0f ||
+        stand_stabilizer_config_.wbc_roll_moment_kd < 0.0f ||
+        stand_stabilizer_config_.wbc_pitch_moment_kd < 0.0f ||
+        stand_stabilizer_config_.wbc_max_body_moment < 0.0f ||
+        stand_stabilizer_config_.wbc_max_joint_torque < 0.0f) {
+        throw std::runtime_error("stand WBC parameters are invalid");
+    }
+    if (stand_stabilizer_config_.wbc_torque_joint_scale.empty()) {
+        stand_stabilizer_config_.wbc_torque_joint_scale.assign(joint_num_, 0.0);
+        if (joint_num_ > 11) {
+            stand_stabilizer_config_.wbc_torque_joint_scale[0] = 1.0;
+            stand_stabilizer_config_.wbc_torque_joint_scale[1] = 1.0;
+            stand_stabilizer_config_.wbc_torque_joint_scale[2] = 0.3;
+            stand_stabilizer_config_.wbc_torque_joint_scale[3] = 1.0;
+            stand_stabilizer_config_.wbc_torque_joint_scale[6] = 1.0;
+            stand_stabilizer_config_.wbc_torque_joint_scale[7] = 1.0;
+            stand_stabilizer_config_.wbc_torque_joint_scale[8] = 0.3;
+            stand_stabilizer_config_.wbc_torque_joint_scale[9] = 1.0;
+        }
+    }
+    if (stand_stabilizer_config_.wbc_torque_joint_scale.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("stand_wbc_torque_joint_scale must be empty or have the same size as joint_num");
+    }
     if (stand_stabilizer_config_.roll_joint_scale.empty()) {
         stand_stabilizer_config_.roll_joint_scale.assign(joint_num_, 0.0);
         if (joint_num_ > 11) {
@@ -226,6 +301,9 @@ void InferenceNode::load_config() {
     }
     stand_stabilizer_config_.joint_limits = joint_limits_;
     stand_stabilizer_ = std::make_unique<StandingStabilizer>(stand_stabilizer_config_);
+    for (const std::string& diagnostic_line : stand_stabilizer_->diagnostics()) {
+        RCLCPP_INFO(this->get_logger(), "%s", diagnostic_line.c_str());
+    }
     for (size_t i = 0; i < usd2urdf_.size(); i++) {
         if (usd2urdf_[i] < 0 || usd2urdf_[i] >= joint_num_) {
             throw std::runtime_error("usd2urdf[" + std::to_string(i) + "] is out of joint range");
@@ -377,6 +455,27 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_left_foot_link: %s", stand_stabilizer_config_.whole_body_left_foot_link.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_right_foot_link: %s", stand_stabilizer_config_.whole_body_right_foot_link.c_str());
     print_vector<std::string>("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
+    RCLCPP_INFO(this->get_logger(), "stand_validate_whole_body_model: %s", stand_stabilizer_config_.validate_whole_body_model ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_enable_torque: %s", stand_stabilizer_config_.wbc_torque_enabled ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_qp_iterations: %d", stand_stabilizer_config_.wbc_qp_iterations);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_friction_coefficient: %f", stand_stabilizer_config_.wbc_friction_coefficient);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_normal_force_limit: [%f, %f]",
+                stand_stabilizer_config_.wbc_min_normal_force,
+                stand_stabilizer_config_.wbc_max_normal_force);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_force_tracking_weight: %f", stand_stabilizer_config_.wbc_force_tracking_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_moment_tracking_weight: %f", stand_stabilizer_config_.wbc_moment_tracking_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_regularization_weight: %f", stand_stabilizer_config_.wbc_regularization_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_smooth_weight: %f", stand_stabilizer_config_.wbc_smooth_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_com_kp: %f", stand_stabilizer_config_.wbc_com_kp);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_com_kd: %f", stand_stabilizer_config_.wbc_com_kd);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_max_com_accel: %f", stand_stabilizer_config_.wbc_max_com_accel);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_roll_moment_kp: %f", stand_stabilizer_config_.wbc_roll_moment_kp);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_roll_moment_kd: %f", stand_stabilizer_config_.wbc_roll_moment_kd);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_pitch_moment_kp: %f", stand_stabilizer_config_.wbc_pitch_moment_kp);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_pitch_moment_kd: %f", stand_stabilizer_config_.wbc_pitch_moment_kd);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_max_body_moment: %f", stand_stabilizer_config_.wbc_max_body_moment);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_max_joint_torque: %f", stand_stabilizer_config_.wbc_max_joint_torque);
+    print_vector<double>("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
     print_vector<double>("stand_mpc_roll_joint_scale", stand_stabilizer_config_.roll_joint_scale);
     print_vector<double>("stand_mpc_pitch_joint_scale", stand_stabilizer_config_.pitch_joint_scale);
     print_vector<float>("stand_kp", stand_kp_);

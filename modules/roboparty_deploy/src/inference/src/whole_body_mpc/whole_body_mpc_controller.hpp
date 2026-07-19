@@ -4,6 +4,7 @@
 #pragma once
 
 #include "standing_stabilizer.hpp"
+#include "whole_body_mpc/contact_force_qp.hpp"
 #include "whole_body_mpc/robot_model.hpp"
 
 #include <memory>
@@ -17,6 +18,8 @@ class WholeBodyMpcController {
     explicit WholeBodyMpcController(const StandingStabilizer::Config& config);
 
     void reset();
+    std::vector<std::string> diagnostics() const;
+
     StandingStabilizer::Command apply(const StandingStabilizer::Measurement& measurement, float blend,
                                       const std::vector<float>& base_target,
                                       const std::vector<float>& kp,
@@ -28,11 +31,23 @@ class WholeBodyMpcController {
 
    private:
     void validate_model_config() const;
+    ContactForceQp::Input build_contact_qp_input(
+        const StandingStabilizer::Measurement& measurement) const;
+    std::vector<float> compute_joint_torque_command(
+        const RobotModel::Kinematics& kinematics,
+        const ContactForceQp::Result& contact_result,
+        const Eigen::VectorXd& q,
+        const Eigen::VectorXd& v,
+        float blend,
+        StandingStabilizer::Correction& correction) const;
 
     StandingStabilizer::Config config_;
     std::unique_ptr<RobotModel> robot_model_;
+    std::unique_ptr<ContactForceQp> contact_force_qp_;
     RobotModel::Kinematics neutral_kinematics_;
     RobotModel::Kinematics latest_kinematics_;
+    Eigen::Vector2d neutral_com_offset_xy_ = Eigen::Vector2d::Zero();
+    double robot_mass_ = 0.0;
 };
 
 }  // namespace whole_body_mpc
