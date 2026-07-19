@@ -15,6 +15,8 @@ namespace whole_body_mpc {
 
 class WholeBodyMpcController {
    public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
     explicit WholeBodyMpcController(const StandingStabilizer::Config& config);
 
     void reset();

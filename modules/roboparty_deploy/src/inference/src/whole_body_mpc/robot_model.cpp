@@ -22,8 +22,10 @@
 namespace whole_body_mpc {
 
 struct RobotModel::Impl {
-    pinocchio::Model model;
-    pinocchio::Data data;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    std::unique_ptr<pinocchio::Model> model;
+    std::unique_ptr<pinocchio::Data> data;
     pinocchio::FrameIndex base_frame_id = 0;
     pinocchio::FrameIndex left_foot_frame_id = 0;
     pinocchio::FrameIndex right_foot_frame_id = 0;
@@ -36,38 +38,49 @@ RobotModel::RobotModel(Config config) : config_(std::move(config)) {
     validate_config();
     impl_ = std::make_unique<Impl>();
 
+    auto model = std::make_unique<pinocchio::Model>();
+    pinocchio::urdf::details::UrdfVisitor visitor(*model);
     if (config_.floating_base) {
-        pinocchio::urdf::buildModel(config_.urdf_path, pinocchio::JointModelFreeFlyer(), impl_->model);
+        pinocchio::parsers::JointModel root_joint = pinocchio::JointModelFreeFlyer();
+        const std::string root_joint_name = "root_joint";
+        boost::optional<const pinocchio::parsers::JointModel&> root_joint_opt(root_joint);
+        boost::optional<const std::string&> root_joint_name_opt(root_joint_name);
+        pinocchio::urdf::details::parseRootTree(
+            config_.urdf_path, visitor, root_joint_opt, root_joint_name_opt, false);
     } else {
-        pinocchio::urdf::buildModel(config_.urdf_path, impl_->model);
+        pinocchio::urdf::details::parseRootTree(
+            config_.urdf_path, visitor, boost::none, boost::none, false);
     }
-    impl_->data = pinocchio::Data(impl_->model);
-    for (const auto& inertia : impl_->model.inertias) {
+    impl_->model = std::move(model);
+    impl_->data = std::make_unique<pinocchio::Data>(*impl_->model);
+
+    const auto& pin_model = *impl_->model;
+    for (const auto& inertia : pin_model.inertias) {
         impl_->total_mass += inertia.mass();
     }
 
-    impl_->base_frame_id = impl_->model.getFrameId(config_.base_link);
-    impl_->left_foot_frame_id = impl_->model.getFrameId(config_.left_foot_frame);
-    impl_->right_foot_frame_id = impl_->model.getFrameId(config_.right_foot_frame);
-    if (impl_->base_frame_id >= impl_->model.nframes) {
+    impl_->base_frame_id = pin_model.getFrameId(config_.base_link);
+    impl_->left_foot_frame_id = pin_model.getFrameId(config_.left_foot_frame);
+    impl_->right_foot_frame_id = pin_model.getFrameId(config_.right_foot_frame);
+    if (impl_->base_frame_id >= pin_model.nframes) {
         throw std::runtime_error("base frame not found in URDF: " + config_.base_link);
     }
-    if (impl_->left_foot_frame_id >= impl_->model.nframes) {
+    if (impl_->left_foot_frame_id >= pin_model.nframes) {
         throw std::runtime_error("left foot frame not found in URDF: " + config_.left_foot_frame);
     }
-    if (impl_->right_foot_frame_id >= impl_->model.nframes) {
+    if (impl_->right_foot_frame_id >= pin_model.nframes) {
         throw std::runtime_error("right foot frame not found in URDF: " + config_.right_foot_frame);
     }
 
     std::unordered_map<std::string, std::pair<int, int>> joint_indices;
-    for (pinocchio::JointIndex joint_id = 1; joint_id < impl_->model.joints.size(); joint_id++) {
-        const std::string& joint_name = impl_->model.names[joint_id];
-        const int nq = impl_->model.joints[joint_id].nq();
-        const int nv = impl_->model.joints[joint_id].nv();
+    for (pinocchio::JointIndex joint_id = 1; joint_id < pin_model.joints.size(); joint_id++) {
+        const std::string& joint_name = pin_model.names[joint_id];
+        const int nq = pin_model.joints[joint_id].nq();
+        const int nv = pin_model.joints[joint_id].nv();
         if (nq == 1 && nv == 1) {
             model_joint_order_.push_back(joint_name);
-            joint_indices[joint_name] = {impl_->model.joints[joint_id].idx_q(),
-                                         impl_->model.joints[joint_id].idx_v()};
+            joint_indices[joint_name] = {pin_model.joints[joint_id].idx_q(),
+                                         pin_model.joints[joint_id].idx_v()};
         }
     }
 
@@ -90,11 +103,11 @@ bool RobotModel::is_available() const {
 }
 
 int RobotModel::nq() const {
-    return impl_->model.nq;
+    return impl_->model->nq;
 }
 
 int RobotModel::nv() const {
-    return impl_->model.nv;
+    return impl_->model->nv;
 }
 
 double RobotModel::total_mass() const {
@@ -102,11 +115,11 @@ double RobotModel::total_mass() const {
 }
 
 Eigen::VectorXd RobotModel::neutral_configuration() const {
-    return pinocchio::neutral(impl_->model);
+    return pinocchio::neutral(*impl_->model);
 }
 
 Eigen::VectorXd RobotModel::zero_velocity() const {
-    return Eigen::VectorXd::Zero(impl_->model.nv);
+    return Eigen::VectorXd::Zero(impl_->model->nv);
 }
 
 Eigen::VectorXd RobotModel::make_configuration(
@@ -147,52 +160,56 @@ Eigen::VectorXd RobotModel::make_velocity(
 
 RobotModel::Kinematics RobotModel::compute_kinematics(
     const Eigen::VectorXd& q, const Eigen::VectorXd& v) const {
-    if (q.size() != impl_->model.nq) {
+    const auto& pin_model = *impl_->model;
+    auto& pin_data = *impl_->data;
+    if (q.size() != pin_model.nq) {
         throw std::runtime_error("q size does not match Pinocchio model nq");
     }
-    if (v.size() != impl_->model.nv) {
+    if (v.size() != pin_model.nv) {
         throw std::runtime_error("v size does not match Pinocchio model nv");
     }
 
-    pinocchio::forwardKinematics(impl_->model, impl_->data, q, v);
-    pinocchio::updateFramePlacements(impl_->model, impl_->data);
-    pinocchio::centerOfMass(impl_->model, impl_->data, q, v, false);
-    pinocchio::computeJointJacobians(impl_->model, impl_->data, q);
+    pinocchio::forwardKinematics(pin_model, pin_data, q, v);
+    pinocchio::updateFramePlacements(pin_model, pin_data);
+    pinocchio::centerOfMass(pin_model, pin_data, q, v, false);
+    pinocchio::computeJointJacobians(pin_model, pin_data, q);
 
     Kinematics output;
-    output.com_position = impl_->data.com[0];
-    output.com_velocity = impl_->data.vcom[0];
+    output.com_position = pin_data.com[0];
+    output.com_velocity = pin_data.vcom[0];
 
-    const auto left_pose = impl_->data.oMf[impl_->left_foot_frame_id];
+    const auto left_pose = pin_data.oMf[impl_->left_foot_frame_id];
     output.left_foot_pose.linear() = left_pose.rotation();
     output.left_foot_pose.translation() = left_pose.translation();
-    const auto right_pose = impl_->data.oMf[impl_->right_foot_frame_id];
+    const auto right_pose = pin_data.oMf[impl_->right_foot_frame_id];
     output.right_foot_pose.linear() = right_pose.rotation();
     output.right_foot_pose.translation() = right_pose.translation();
 
-    output.left_foot_jacobian.setZero(6, impl_->model.nv);
-    output.right_foot_jacobian.setZero(6, impl_->model.nv);
-    pinocchio::getFrameJacobian(impl_->model, impl_->data, impl_->left_foot_frame_id,
+    output.left_foot_jacobian.setZero(6, pin_model.nv);
+    output.right_foot_jacobian.setZero(6, pin_model.nv);
+    pinocchio::getFrameJacobian(pin_model, pin_data, impl_->left_foot_frame_id,
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.left_foot_jacobian);
-    pinocchio::getFrameJacobian(impl_->model, impl_->data, impl_->right_foot_frame_id,
+    pinocchio::getFrameJacobian(pin_model, pin_data, impl_->right_foot_frame_id,
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.right_foot_jacobian);
     return output;
 }
 
 Eigen::VectorXd RobotModel::nonlinear_effects(
     const Eigen::VectorXd& q, const Eigen::VectorXd& v) const {
-    if (q.size() != impl_->model.nq) {
+    const auto& pin_model = *impl_->model;
+    auto& pin_data = *impl_->data;
+    if (q.size() != pin_model.nq) {
         throw std::runtime_error("q size does not match Pinocchio model nq");
     }
-    if (v.size() != impl_->model.nv) {
+    if (v.size() != pin_model.nv) {
         throw std::runtime_error("v size does not match Pinocchio model nv");
     }
-    return pinocchio::nonLinearEffects(impl_->model, impl_->data, q, v);
+    return pinocchio::nonLinearEffects(pin_model, pin_data, q, v);
 }
 
 std::vector<double> RobotModel::configured_joint_torques(
     const Eigen::VectorXd& generalized_tau) const {
-    if (generalized_tau.size() != impl_->model.nv) {
+    if (generalized_tau.size() != impl_->model->nv) {
         throw std::runtime_error("generalized_tau size does not match Pinocchio model nv");
     }
     std::vector<double> output(config_.joint_order.size(), 0.0);

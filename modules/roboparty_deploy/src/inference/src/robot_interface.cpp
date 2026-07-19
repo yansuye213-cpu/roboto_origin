@@ -350,10 +350,10 @@ void RobotInterface::motors_mit_cmd() {
                     const size_t slot = (motor_id > 0 && motor_id <= 8) ? static_cast<size_t>(motor_id - 1) : j;
                     if (slot >= 8) continue;
                     pos[slot] = motor_pos_target_[idx] * robot_cfg_->motor_sign_[idx];
-                    vel[slot] = motor_vel_target_[idx];
+                    vel[slot] = motor_vel_target_[idx] * robot_cfg_->motor_sign_[idx];
                     kp[slot]  = motor_kp_target_[idx];
                     kd[slot]  = motor_kd_target_[idx];
-                    tau[slot] = motor_tau_target_[idx];
+                    tau[slot] = motor_tau_target_[idx] * robot_cfg_->motor_sign_[idx];
                 }
                 motors_[start_count]->motor_mit_cmd(pos, vel, kp, kd, tau);
             });
@@ -362,10 +362,10 @@ void RobotInterface::motors_mit_cmd() {
                 for (size_t j = 0; j < num_motors; ++j) {
                     const size_t idx = start_count + j;
                     motors_[idx]->motor_mit_cmd(motor_pos_target_[idx] * robot_cfg_->motor_sign_[idx],
-                                                 motor_vel_target_[idx],
+                                                 motor_vel_target_[idx] * robot_cfg_->motor_sign_[idx],
                                                  motor_kp_target_[idx],
                                                  motor_kd_target_[idx],
-                                                 motor_tau_target_[idx]);
+                                                 motor_tau_target_[idx] * robot_cfg_->motor_sign_[idx]);
                 }
             });
         }

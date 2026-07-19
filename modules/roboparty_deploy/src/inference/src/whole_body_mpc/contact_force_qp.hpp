@@ -9,6 +9,8 @@ namespace whole_body_mpc {
 
 class ContactForceQp {
    public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
     struct Config {
         int iterations = 24;
         double friction_coefficient = 0.45;
@@ -21,6 +23,8 @@ class ContactForceQp {
     };
 
     struct Input {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
         double mass = 0.0;
         Eigen::Vector3d desired_com_acceleration = Eigen::Vector3d::Zero();
         Eigen::Vector3d desired_body_moment = Eigen::Vector3d::Zero();
@@ -30,6 +34,8 @@ class ContactForceQp {
     };
 
     struct Result {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
         Eigen::Vector3d left_force = Eigen::Vector3d::Zero();
         Eigen::Vector3d right_force = Eigen::Vector3d::Zero();
         Eigen::Matrix<double, 6, 1> target_wrench = Eigen::Matrix<double, 6, 1>::Zero();

@@ -23,6 +23,8 @@ class RobotModel {
     };
 
     struct Kinematics {
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
         Eigen::Vector3d com_position = Eigen::Vector3d::Zero();
         Eigen::Vector3d com_velocity = Eigen::Vector3d::Zero();
         Eigen::Isometry3d left_foot_pose = Eigen::Isometry3d::Identity();

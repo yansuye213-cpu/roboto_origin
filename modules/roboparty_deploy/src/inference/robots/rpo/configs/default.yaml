@@ -36,7 +36,7 @@ inference_node:
              0.0000, 0.0000, 0.0000, 0.0000,
              0.0000, 0.0000, 0.0000, 0.0000]
         stand_transition_time: 1.5
-        stand_control_backend: "joint_qp"
+        stand_control_backend: "whole_body_mpc"
         stand_mpc_horizon: 20
         stand_mpc_q_angle: 120.0
         stand_mpc_q_rate: 1.4
@@ -54,7 +54,7 @@ inference_node:
         stand_qp_regularization_weight: 0.02
         stand_qp_smooth_weight: 0.8
         stand_qp_max_joint_velocity: 4.0
-        stand_whole_body_model_path: "/home/yansuye/Projects/loobot/urdf/Loobot614.urdf"
+        stand_whole_body_model_path: "src/urdf/Loobot614.urdf"
         stand_whole_body_base_link: "base_link"
         stand_whole_body_left_foot_link: "left_ankle_roll_link"
         stand_whole_body_right_foot_link: "right_ankle_roll_link"
