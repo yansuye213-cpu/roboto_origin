@@ -63,6 +63,8 @@ add_executable(inference_node
   src/ros_interface.cpp
   src/obs_manager.cpp
   src/standing_stabilizer.cpp
+  src/stand_control/joint_qp_stand_controller.cpp
+  src/whole_body_mpc/whole_body_mpc_controller.cpp
 )
 target_include_directories(inference_node
   PUBLIC 

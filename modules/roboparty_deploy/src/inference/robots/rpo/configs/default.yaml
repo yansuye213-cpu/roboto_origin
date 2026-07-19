@@ -36,6 +36,7 @@ inference_node:
              0.0000, 0.0000, 0.0000, 0.0000,
              0.0000, 0.0000, 0.0000, 0.0000]
         stand_transition_time: 1.5
+        stand_control_backend: "joint_qp"
         stand_mpc_horizon: 20
         stand_mpc_q_angle: 120.0
         stand_mpc_q_rate: 1.4
@@ -46,6 +47,17 @@ inference_node:
         stand_mpc_max_joint_correction: 0.20
         stand_mpc_target_roll: 0.0
         stand_mpc_target_pitch: 0.085
+        stand_qp_enabled: true
+        stand_qp_iterations: 32
+        stand_qp_tracking_weight: 4.0
+        stand_qp_shape_weight: 0.25
+        stand_qp_regularization_weight: 0.02
+        stand_qp_smooth_weight: 0.8
+        stand_qp_max_joint_velocity: 4.0
+        stand_whole_body_model_path: "/home/yansuye/Projects/loobot/urdf/Loobot614.urdf"
+        stand_whole_body_base_link: ""
+        stand_whole_body_left_foot_link: ""
+        stand_whole_body_right_foot_link: ""
         stand_mpc_roll_joint_scale:
             [0.0, 0.35, 0.0, 0.0, 0.0, 1.0,
              0.0, 0.35, 0.0, 0.0, 0.0, 1.0,

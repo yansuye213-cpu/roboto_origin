@@ -250,6 +250,9 @@ void InferenceNode::reset_policy_runtime(PolicyRuntime& policy) {
 void InferenceNode::start_stand_transition_locked() {
     stand_transition_elapsed_ = 0.0f;
     stand_transition_active_ = true;
+    if (stand_stabilizer_) {
+        stand_stabilizer_->reset();
+    }
     stand_start_action_.assign(joint_num_, 0.0f);
     std::unique_lock<std::mutex> lock(act_mutex_);
     for (int i = 0; i < joint_num_; i++) {
@@ -295,19 +298,23 @@ void InferenceNode::apply_stand_action() {
         }
     }
 
-    const StandingStabilizer::Correction correction =
-        stand_stabilizer_->apply(measurement, mpc_blend, target);
+    const StandingStabilizer::Command command =
+        stand_stabilizer_->apply(measurement, mpc_blend, target, stand_kp_, stand_kd_);
+    const StandingStabilizer::Correction& correction = command.correction;
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                         "stand mpc: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f roll_corr=%.4f pitch_corr=%.4f",
+                         "stand ctrl[%s]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f roll_corr=%.4f pitch_corr=%.4f roll_out=%.4f pitch_out=%.4f qp=%d max_delta=%.4f",
+                         stand_stabilizer_->config().control_backend.c_str(),
                          measurement.roll, measurement.pitch, measurement.wx, measurement.wy,
-                         correction.roll_correction, correction.pitch_correction);
+                         correction.roll_correction, correction.pitch_correction,
+                         correction.roll_allocated, correction.pitch_allocated,
+                         correction.qp_used ? 1 : 0, correction.max_joint_delta);
 
     {
         std::unique_lock<std::mutex> lock(act_mutex_);
-        act_ = target;
-        last_act_ = target;
+        act_ = command.position;
+        last_act_ = command.position;
     }
-    robot_->apply_action(target, {}, stand_kp_, stand_kd_);
+    robot_->apply_action(command.position, command.velocity, command.kp, command.kd, command.tau);
     publish_joint_states();
     publish_imu();
     publish_action();

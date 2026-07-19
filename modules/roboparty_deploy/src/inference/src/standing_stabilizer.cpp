@@ -3,7 +3,9 @@
 
 #include "standing_stabilizer.hpp"
 
-#include <Eigen/Dense>
+#include "stand_control/joint_qp_stand_controller.hpp"
+#include "whole_body_mpc/whole_body_mpc_controller.hpp"
+
 #include <Eigen/Geometry>
 #include <algorithm>
 #include <cmath>
@@ -11,6 +13,9 @@
 #include <utility>
 
 StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config)) {
+    if (config_.control_backend != "joint_qp" && config_.control_backend != "whole_body_mpc") {
+        throw std::runtime_error("StandingStabilizer control_backend must be joint_qp or whole_body_mpc");
+    }
     if (config_.joint_num <= 0) {
         throw std::runtime_error("StandingStabilizer joint_num must be positive");
     }
@@ -26,6 +31,14 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
     if (config_.max_accel <= 0.0f || config_.max_joint_correction < 0.0f) {
         throw std::runtime_error("StandingStabilizer limits are invalid");
     }
+    if (config_.qp_iterations <= 0) {
+        throw std::runtime_error("StandingStabilizer qp_iterations must be positive");
+    }
+    if (config_.qp_tracking_weight < 0.0f || config_.qp_shape_weight < 0.0f ||
+        config_.qp_regularization_weight < 0.0f || config_.qp_smooth_weight < 0.0f ||
+        config_.qp_max_joint_velocity < 0.0f) {
+        throw std::runtime_error("StandingStabilizer QP parameters are invalid");
+    }
     if (config_.roll_joint_scale.size() != static_cast<size_t>(config_.joint_num)) {
         throw std::runtime_error("StandingStabilizer roll_joint_scale size mismatch");
     }
@@ -35,6 +48,29 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
     if (!config_.joint_limits.empty() &&
         config_.joint_limits.size() != static_cast<size_t>(config_.joint_num * 2)) {
         throw std::runtime_error("StandingStabilizer joint_limits size mismatch");
+    }
+
+    if (uses_whole_body_mpc()) {
+        whole_body_mpc_controller_ =
+            std::make_unique<whole_body_mpc::WholeBodyMpcController>(config_);
+    } else {
+        joint_qp_controller_ =
+            std::make_unique<stand_control::JointQpStandController>(config_);
+    }
+}
+
+StandingStabilizer::~StandingStabilizer() = default;
+
+bool StandingStabilizer::uses_whole_body_mpc() const {
+    return config_.control_backend == "whole_body_mpc";
+}
+
+void StandingStabilizer::reset() {
+    if (joint_qp_controller_) {
+        joint_qp_controller_->reset();
+    }
+    if (whole_body_mpc_controller_) {
+        whole_body_mpc_controller_->reset();
     }
 }
 
@@ -64,54 +100,14 @@ StandingStabilizer::Measurement StandingStabilizer::measure(
     return measurement;
 }
 
-StandingStabilizer::Correction StandingStabilizer::apply(
-    const Measurement& measurement, float blend, std::vector<float>& target) const {
-    if (target.size() != static_cast<size_t>(config_.joint_num)) {
-        throw std::runtime_error("StandingStabilizer target size mismatch");
+StandingStabilizer::Command StandingStabilizer::apply(
+    const Measurement& measurement, float blend, const std::vector<float>& base_target,
+    const std::vector<float>& kp, const std::vector<float>& kd) {
+    if (joint_qp_controller_) {
+        return joint_qp_controller_->apply(measurement, blend, base_target, kp, kd);
     }
-
-    Correction correction;
-    correction.roll_accel = solve_axis(measurement.roll, measurement.wx, config_.target_roll);
-    correction.pitch_accel = solve_axis(measurement.pitch, measurement.wy, config_.target_pitch);
-    correction.roll_correction = blend * std::clamp(correction.roll_accel * config_.roll_gain,
-                                                    -config_.max_joint_correction,
-                                                    config_.max_joint_correction);
-    correction.pitch_correction = blend * std::clamp(correction.pitch_accel * config_.pitch_gain,
-                                                     -config_.max_joint_correction,
-                                                     config_.max_joint_correction);
-
-    for (int i = 0; i < config_.joint_num; i++) {
-        target[i] += static_cast<float>(config_.roll_joint_scale[i]) * correction.roll_correction;
-        target[i] += static_cast<float>(config_.pitch_joint_scale[i]) * correction.pitch_correction;
-        if (!config_.joint_limits.empty()) {
-            target[i] = std::clamp(target[i],
-                                   static_cast<float>(config_.joint_limits[i * 2]),
-                                   static_cast<float>(config_.joint_limits[i * 2 + 1]));
-        }
+    if (whole_body_mpc_controller_) {
+        return whole_body_mpc_controller_->apply(measurement, blend, base_target, kp, kd);
     }
-    return correction;
-}
-
-float StandingStabilizer::solve_axis(float angle, float rate, float target_angle) const {
-    const float h = std::max(config_.dt, 1.0e-4f);
-    Eigen::Matrix2f A;
-    A << 1.0f, h,
-         0.0f, 1.0f;
-    Eigen::Vector2f B(0.5f * h * h, h);
-    Eigen::Matrix2f Q = Eigen::Matrix2f::Zero();
-    Q(0, 0) = config_.q_angle;
-    Q(1, 1) = config_.q_rate;
-    const float R = std::max(config_.r_accel, 1.0e-6f);
-    Eigen::Matrix2f P = Q;
-    Eigen::RowVector2f K = Eigen::RowVector2f::Zero();
-
-    for (int i = 0; i < config_.horizon; i++) {
-        const Eigen::Vector2f PB = P * B;
-        const float denom = R + B.dot(PB);
-        K = (B.transpose() * P * A) / denom;
-        P = Q + A.transpose() * P * (A - B * K);
-    }
-
-    Eigen::Vector2f x(angle - target_angle, rate);
-    return std::clamp(-K.dot(x), -config_.max_accel, config_.max_accel);
+    throw std::runtime_error("StandingStabilizer has no active backend");
 }

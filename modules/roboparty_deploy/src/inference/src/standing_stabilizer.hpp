@@ -3,12 +3,23 @@
 
 #pragma once
 
+#include <memory>
+#include <string>
 #include <vector>
+
+namespace stand_control {
+class JointQpStandController;
+}
+
+namespace whole_body_mpc {
+class WholeBodyMpcController;
+}
 
 class StandingStabilizer {
    public:
     struct Config {
         int joint_num = 0;
+        std::string control_backend = "joint_qp";
         int horizon = 20;
         float dt = 0.004f;
         float q_angle = 120.0f;
@@ -20,6 +31,17 @@ class StandingStabilizer {
         float max_joint_correction = 0.12f;
         float target_roll = 0.0f;
         float target_pitch = 0.0f;
+        bool qp_enabled = false;
+        int qp_iterations = 32;
+        float qp_tracking_weight = 4.0f;
+        float qp_shape_weight = 0.25f;
+        float qp_regularization_weight = 0.02f;
+        float qp_smooth_weight = 0.8f;
+        float qp_max_joint_velocity = 4.0f;
+        std::string whole_body_model_path;
+        std::string whole_body_base_link;
+        std::string whole_body_left_foot_link;
+        std::string whole_body_right_foot_link;
         std::vector<double> roll_joint_scale;
         std::vector<double> pitch_joint_scale;
         std::vector<double> joint_limits;
@@ -38,17 +60,35 @@ class StandingStabilizer {
         float pitch_accel = 0.0f;
         float roll_correction = 0.0f;
         float pitch_correction = 0.0f;
+        float roll_allocated = 0.0f;
+        float pitch_allocated = 0.0f;
+        float max_joint_delta = 0.0f;
+        bool qp_used = false;
+    };
+
+    struct Command {
+        std::vector<float> position;
+        std::vector<float> velocity;
+        std::vector<float> kp;
+        std::vector<float> kd;
+        std::vector<float> tau;
+        Correction correction;
     };
 
     explicit StandingStabilizer(Config config);
+    ~StandingStabilizer();
 
     const Config& config() const { return config_; }
 
+    void reset();
     Measurement measure(const std::vector<float>& quat, const std::vector<float>& angular_velocity) const;
-    Correction apply(const Measurement& measurement, float blend, std::vector<float>& target) const;
+    Command apply(const Measurement& measurement, float blend, const std::vector<float>& base_target,
+                  const std::vector<float>& kp, const std::vector<float>& kd);
 
    private:
-    float solve_axis(float angle, float rate, float target_angle) const;
+    bool uses_whole_body_mpc() const;
 
     Config config_;
+    std::unique_ptr<stand_control::JointQpStandController> joint_qp_controller_;
+    std::unique_ptr<whole_body_mpc::WholeBodyMpcController> whole_body_mpc_controller_;
 };
