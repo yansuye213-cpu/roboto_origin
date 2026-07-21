@@ -20,7 +20,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
-find_package(Boost COMPONENTS system)
+find_package(Boost REQUIRED COMPONENTS system)
 find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
@@ -29,6 +29,7 @@ find_package(roboparty_imu REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 REQUIRED)
 find_package(pinocchio REQUIRED)
+find_package(ocs2_sqp QUIET)
 
 option(YAML_BUILD_SHARED_LIBS "Build shared library" OFF)
 option(YAML_CPP_BUILD_TESTS "Build tests" OFF)
@@ -46,6 +47,23 @@ if(TARGET pinocchio::pinocchio)
 else()
   list(APPEND PINOCCHIO_DEPENDENCIES ${pinocchio_LIBRARIES})
   list(APPEND PINOCCHIO_INCLUDE_DIRS ${pinocchio_INCLUDE_DIRS})
+endif()
+
+set(OCS2_SOURCES)
+set(OCS2_DEPENDENCIES)
+set(ROBOPARTY_WITH_OCS2 OFF)
+if(ocs2_sqp_FOUND AND TARGET ocs2_sqp::ocs2_sqp)
+  find_package(Boost REQUIRED COMPONENTS system filesystem log log_setup)
+  message(STATUS "OCS2 found: enabling OCS2 centroidal MPC backend")
+  set(ROBOPARTY_WITH_OCS2 ON)
+  list(APPEND OCS2_SOURCES
+    src/whole_body_mpc/mpc/ocs2_centroidal_mpc.cpp
+  )
+  list(APPEND OCS2_DEPENDENCIES
+    ocs2_sqp::ocs2_sqp
+  )
+else()
+  message(STATUS "OCS2 not found: stand_wbc_mpc_backend=ocs2 will report a runtime error")
 endif()
 
 add_subdirectory(src)
@@ -74,9 +92,14 @@ add_executable(inference_node
   src/ros_interface.cpp
   src/obs_manager.cpp
   src/standing_stabilizer.cpp
-  src/whole_body_mpc/contact_force_qp.cpp
-  src/whole_body_mpc/robot_model.cpp
-  src/whole_body_mpc/stance_mpc.cpp
+  src/whole_body_mpc/estimation/base_state_estimator.cpp
+  src/whole_body_mpc/model/robot_model.cpp
+  src/whole_body_mpc/mpc/centroidal_mpc.cpp
+  ${OCS2_SOURCES}
+  src/whole_body_mpc/reference/contact_schedule.cpp
+  src/whole_body_mpc/reference/foot_placement_planner.cpp
+  src/whole_body_mpc/reference/recovery_gait_planner.cpp
+  src/whole_body_mpc/wbc/contact_force_qp.cpp
   src/whole_body_mpc/whole_body_mpc_controller.cpp
 )
 target_include_directories(inference_node
@@ -88,7 +111,14 @@ target_include_directories(inference_node
   ${CNPY_INCLUDE_DIR}
   ${PINOCCHIO_INCLUDE_DIRS}
 )
-target_link_libraries(inference_node PUBLIC ${PUBLIC_DEPENDENCIES} ${PINOCCHIO_DEPENDENCIES} utils cnpy robot)
+target_link_libraries(inference_node PUBLIC
+  ${PUBLIC_DEPENDENCIES}
+  ${PINOCCHIO_DEPENDENCIES}
+  ${OCS2_DEPENDENCIES}
+  utils cnpy robot)
+if(ROBOPARTY_WITH_OCS2)
+  target_compile_definitions(inference_node PRIVATE ROBOPARTY_WITH_OCS2=1)
+endif()
 ament_target_dependencies(inference_node PUBLIC rclcpp sensor_msgs geometry_msgs std_srvs)
 
 set_target_properties(inference_node PROPERTIES LINK_FLAGS "-Wl,--no-as-needed")

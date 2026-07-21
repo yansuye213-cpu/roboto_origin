@@ -11,6 +11,14 @@
 #include <stdexcept>
 #include <utility>
 
+namespace {
+
+bool is_supported_wbc_mpc_backend(const std::string& backend) {
+    return backend == "disabled" || backend == "ocs2";
+}
+
+}  // namespace
+
 StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config)) {
     if (config_.joint_num <= 0) {
         throw std::runtime_error("StandingStabilizer joint_num must be positive");
@@ -19,17 +27,34 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         throw std::runtime_error("StandingStabilizer dt must be positive");
     }
     if (config_.wbc_mpc_horizon <= 0 ||
+        config_.wbc_mpc_dt <= 0.0f ||
+        !is_supported_wbc_mpc_backend(config_.wbc_mpc_backend) ||
         config_.wbc_mpc_orientation_weight < 0.0f ||
         config_.wbc_mpc_angular_rate_weight < 0.0f ||
         config_.wbc_mpc_com_weight < 0.0f ||
         config_.wbc_mpc_com_velocity_weight < 0.0f ||
-        config_.wbc_mpc_control_weight <= 0.0f ||
+        config_.wbc_mpc_terminal_weight_scale < 0.0f ||
+        config_.wbc_mpc_input_smooth_weight < 0.0f ||
+        config_.wbc_mpc_force_weight <= 0.0f ||
+        config_.wbc_mpc_qp_iterations < 0 ||
+        config_.wbc_mpc_friction_barrier_mu < 0.0f ||
+        config_.wbc_mpc_friction_barrier_delta <= 0.0f ||
+        config_.wbc_mpc_friction_regularization <= 0.0f ||
         config_.wbc_mpc_max_angular_accel < 0.0f ||
-        config_.wbc_mpc_max_com_accel < 0.0f) {
+        config_.wbc_mpc_max_com_accel < 0.0f ||
+        config_.wbc_mpc_max_contact_force_delta < 0.0f) {
         throw std::runtime_error("StandingStabilizer WBC MPC parameters are invalid");
+    }
+    if (config_.wbc_state_velocity_filter_alpha < 0.0f ||
+        config_.wbc_state_velocity_filter_alpha > 1.0f ||
+        config_.wbc_state_max_base_linear_velocity < 0.0f) {
+        throw std::runtime_error("StandingStabilizer WBC state estimation parameters are invalid");
     }
     if (config_.wbc_qp_iterations <= 0) {
         throw std::runtime_error("StandingStabilizer wbc_qp_iterations must be positive");
+    }
+    if (config_.wbc_active_set_iterations <= 0) {
+        throw std::runtime_error("StandingStabilizer wbc_active_set_iterations must be positive");
     }
     if (config_.wbc_friction_coefficient < 0.0f ||
         config_.wbc_min_normal_force < 0.0f ||
@@ -39,8 +64,45 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.wbc_regularization_weight < 0.0f ||
         config_.wbc_smooth_weight < 0.0f ||
         config_.wbc_max_body_moment < 0.0f ||
-        config_.wbc_max_joint_torque < 0.0f) {
+        config_.wbc_max_joint_torque < 0.0f ||
+        config_.wbc_foot_half_length < 0.0f ||
+        config_.wbc_foot_half_width < 0.0f) {
         throw std::runtime_error("StandingStabilizer WBC parameters are invalid");
+    }
+    if (config_.wbc_step_recovery_roll_trigger < 0.0f ||
+        config_.wbc_step_recovery_pitch_trigger < 0.0f ||
+        config_.wbc_step_recovery_rate_trigger < 0.0f ||
+        config_.wbc_step_recovery_com_trigger < 0.0f ||
+        config_.wbc_step_recovery_com_velocity_trigger < 0.0f ||
+        config_.wbc_step_recovery_return_roll < 0.0f ||
+        config_.wbc_step_recovery_return_pitch < 0.0f ||
+        config_.wbc_step_recovery_return_rate < 0.0f ||
+        config_.wbc_step_recovery_return_com < 0.0f ||
+        config_.wbc_step_recovery_return_com_velocity < 0.0f ||
+        config_.wbc_step_recovery_steps < 0 ||
+        config_.wbc_step_recovery_swing_time <= 0.0f ||
+        config_.wbc_step_recovery_double_support_time < 0.0f ||
+        config_.wbc_step_recovery_settle_time < 0.0f ||
+        config_.wbc_step_recovery_stable_time < 0.0f ||
+        config_.wbc_step_recovery_cooldown < 0.0f ||
+        config_.wbc_step_recovery_max_duration < 0.0f ||
+        config_.wbc_step_recovery_min_step_x < 0.0f ||
+        config_.wbc_step_recovery_min_step_y < 0.0f ||
+        config_.wbc_step_recovery_max_step_x < 0.0f ||
+        config_.wbc_step_recovery_max_step_y < 0.0f ||
+        config_.wbc_step_recovery_min_step_x > config_.wbc_step_recovery_max_step_x ||
+        config_.wbc_step_recovery_min_step_y > config_.wbc_step_recovery_max_step_y ||
+        config_.wbc_step_recovery_capture_time < 0.0f ||
+        config_.wbc_step_recovery_capture_gain < 0.0f ||
+        config_.wbc_step_recovery_swing_height < 0.0f ||
+        config_.wbc_swing_tracking_weight < 0.0f ||
+        config_.wbc_swing_kp < 0.0f ||
+        config_.wbc_swing_kd < 0.0f ||
+        config_.wbc_swing_ik_gain < 0.0f ||
+        config_.wbc_swing_ik_damping < 0.0f ||
+        config_.wbc_swing_max_joint_delta < 0.0f ||
+        config_.wbc_swing_max_joint_velocity < 0.0f) {
+        throw std::runtime_error("StandingStabilizer WBC step recovery parameters are invalid");
     }
     if (!config_.joint_limits.empty() &&
         config_.joint_limits.size() != static_cast<size_t>(config_.joint_num * 2)) {

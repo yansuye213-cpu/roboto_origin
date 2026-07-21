@@ -41,27 +41,111 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::string>("stand_whole_body_right_foot_link", "");
     this->declare_parameter<std::vector<std::string>>("stand_whole_body_joint_order", std::vector<std::string>{});
     this->declare_parameter<bool>("stand_validate_whole_body_model", false);
+    this->declare_parameter<bool>("stand_wbc_mpc_enabled", true);
+    this->declare_parameter<std::string>("stand_wbc_mpc_backend", "ocs2");
     this->declare_parameter<int>("stand_wbc_mpc_horizon", 20);
+    this->declare_parameter<float>("stand_wbc_mpc_dt", 0.012);
     this->declare_parameter<float>("stand_wbc_target_roll", 0.0);
     this->declare_parameter<float>("stand_wbc_target_pitch", 0.0);
     this->declare_parameter<float>("stand_wbc_mpc_orientation_weight", 120.0);
     this->declare_parameter<float>("stand_wbc_mpc_angular_rate_weight", 1.4);
     this->declare_parameter<float>("stand_wbc_mpc_com_weight", 30.0);
     this->declare_parameter<float>("stand_wbc_mpc_com_velocity_weight", 4.0);
-    this->declare_parameter<float>("stand_wbc_mpc_control_weight", 0.15);
+    this->declare_parameter<float>("stand_wbc_mpc_terminal_weight_scale", 4.0);
+    this->declare_parameter<float>("stand_wbc_mpc_input_smooth_weight", 0.02);
+    this->declare_parameter<float>("stand_wbc_mpc_force_weight", 0.02);
+    this->declare_parameter<int>("stand_wbc_mpc_qp_iterations", 40);
+    this->declare_parameter<bool>("stand_wbc_mpc_terminal_cost_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_input_smoothing_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_contact_schedule_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_solver_constraints_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_zero_swing_force_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_normal_force_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_delta_force_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_friction_cone_constraint_enabled", true);
+    this->declare_parameter<float>("stand_wbc_mpc_friction_barrier_mu", 0.1);
+    this->declare_parameter<float>("stand_wbc_mpc_friction_barrier_delta", 5.0);
+    this->declare_parameter<float>("stand_wbc_mpc_friction_regularization", 25.0);
     this->declare_parameter<float>("stand_wbc_mpc_max_angular_accel", 12.0);
     this->declare_parameter<float>("stand_wbc_mpc_max_com_accel", 2.0);
+    this->declare_parameter<float>("stand_wbc_mpc_max_contact_force_delta", 60.0);
+    this->declare_parameter<bool>("stand_wbc_state_estimation_enabled", true);
+    this->declare_parameter<float>("stand_wbc_state_velocity_filter_alpha", 0.85);
+    this->declare_parameter<float>("stand_wbc_state_max_base_linear_velocity", 0.8);
+    this->declare_parameter<bool>("stand_wbc_contact_force_qp_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_whole_body_qp_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_floating_base_eom_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_stance_contact_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_friction_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_torque_limit_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_base_accel_task_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_contact_force_task_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_swing_task_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_qddot_regularization_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_tau_regularization_enabled", true);
     this->declare_parameter<bool>("stand_wbc_enable_torque", false);
     this->declare_parameter<int>("stand_wbc_qp_iterations", 24);
+    this->declare_parameter<int>("stand_wbc_active_set_iterations", 80);
     this->declare_parameter<float>("stand_wbc_friction_coefficient", 0.45);
     this->declare_parameter<float>("stand_wbc_min_normal_force", 0.0);
-    this->declare_parameter<float>("stand_wbc_max_normal_force", 250.0);
+    this->declare_parameter<float>("stand_wbc_max_normal_force", 420.0);
     this->declare_parameter<float>("stand_wbc_force_tracking_weight", 1.0);
     this->declare_parameter<float>("stand_wbc_moment_tracking_weight", 0.03);
     this->declare_parameter<float>("stand_wbc_regularization_weight", 0.0001);
     this->declare_parameter<float>("stand_wbc_smooth_weight", 0.02);
     this->declare_parameter<float>("stand_wbc_max_body_moment", 8.0);
     this->declare_parameter<float>("stand_wbc_max_joint_torque", 0.6);
+    this->declare_parameter<float>("stand_wbc_foot_half_length", 0.065);
+    this->declare_parameter<float>("stand_wbc_foot_half_width", 0.035);
+    this->declare_parameter<float>("stand_wbc_foot_center_x", 0.060);
+    this->declare_parameter<float>("stand_wbc_foot_contact_z", -0.040);
+    this->declare_parameter<bool>("stand_wbc_virtual_foot_corners_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_step_recovery_enabled", false);
+    this->declare_parameter<bool>("stand_wbc_step_placement_enabled", true);
+    this->declare_parameter<float>("stand_wbc_step_recovery_roll_trigger", 0.24);
+    this->declare_parameter<float>("stand_wbc_step_recovery_pitch_trigger", 0.22);
+    this->declare_parameter<float>("stand_wbc_step_recovery_rate_trigger", 1.20);
+    this->declare_parameter<float>("stand_wbc_step_recovery_com_trigger", 0.0);
+    this->declare_parameter<float>("stand_wbc_step_recovery_com_velocity_trigger", 0.0);
+    this->declare_parameter<float>("stand_wbc_step_recovery_return_roll", 0.10);
+    this->declare_parameter<float>("stand_wbc_step_recovery_return_pitch", 0.12);
+    this->declare_parameter<float>("stand_wbc_step_recovery_return_rate", 0.35);
+    this->declare_parameter<float>("stand_wbc_step_recovery_return_com", 0.0);
+    this->declare_parameter<float>("stand_wbc_step_recovery_return_com_velocity", 0.0);
+    this->declare_parameter<int>("stand_wbc_step_recovery_steps", 2);
+    this->declare_parameter<float>("stand_wbc_step_recovery_swing_time", 0.45);
+    this->declare_parameter<float>("stand_wbc_step_recovery_double_support_time", 0.12);
+    this->declare_parameter<float>("stand_wbc_step_recovery_settle_time", 0.25);
+    this->declare_parameter<float>("stand_wbc_step_recovery_stable_time", 0.30);
+    this->declare_parameter<float>("stand_wbc_step_recovery_cooldown", 0.80);
+    this->declare_parameter<float>("stand_wbc_step_recovery_max_duration", 2.50);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_x_pitch_gain", 0.28);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_x_rate_gain", 0.04);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_x_com_gain", 0.30);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_x_com_velocity_gain", 0.08);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_y_roll_gain", 0.18);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_y_rate_gain", 0.03);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_y_com_gain", 0.30);
+    this->declare_parameter<float>("stand_wbc_step_recovery_step_y_com_velocity_gain", 0.06);
+    this->declare_parameter<float>("stand_wbc_step_recovery_capture_time", 0.25);
+    this->declare_parameter<float>("stand_wbc_step_recovery_capture_gain", 0.35);
+    this->declare_parameter<float>("stand_wbc_step_recovery_min_step_x", 0.03);
+    this->declare_parameter<float>("stand_wbc_step_recovery_min_step_y", 0.02);
+    this->declare_parameter<float>("stand_wbc_step_recovery_max_step_x", 0.12);
+    this->declare_parameter<float>("stand_wbc_step_recovery_max_step_y", 0.07);
+    this->declare_parameter<float>("stand_wbc_step_recovery_swing_height", 0.035);
+    this->declare_parameter<bool>("stand_wbc_step_recovery_start_with_left", true);
+    this->declare_parameter<bool>("stand_wbc_step_recovery_first_swing_left_on_positive_roll", true);
+    this->declare_parameter<float>("stand_wbc_step_recovery_sagittal_sign", 1.0);
+    this->declare_parameter<float>("stand_wbc_step_recovery_lateral_sign", 1.0);
+    this->declare_parameter<float>("stand_wbc_swing_tracking_weight", 20.0);
+    this->declare_parameter<bool>("stand_wbc_swing_ik_enabled", true);
+    this->declare_parameter<float>("stand_wbc_swing_kp", 60.0);
+    this->declare_parameter<float>("stand_wbc_swing_kd", 8.0);
+    this->declare_parameter<float>("stand_wbc_swing_ik_gain", 0.7);
+    this->declare_parameter<float>("stand_wbc_swing_ik_damping", 0.02);
+    this->declare_parameter<float>("stand_wbc_swing_max_joint_delta", 0.25);
+    this->declare_parameter<float>("stand_wbc_swing_max_joint_velocity", 2.0);
     this->declare_parameter<std::vector<double>>("stand_wbc_torque_joint_scale", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_kp", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_kd", std::vector<double>{});
@@ -113,18 +197,51 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_whole_body_right_foot_link", stand_stabilizer_config_.whole_body_right_foot_link);
     this->get_parameter("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
     this->get_parameter("stand_validate_whole_body_model", stand_stabilizer_config_.validate_whole_body_model);
+    this->get_parameter("stand_wbc_mpc_enabled", stand_stabilizer_config_.wbc_mpc_enabled);
+    this->get_parameter("stand_wbc_mpc_backend", stand_stabilizer_config_.wbc_mpc_backend);
     this->get_parameter("stand_wbc_mpc_horizon", stand_stabilizer_config_.wbc_mpc_horizon);
+    this->get_parameter("stand_wbc_mpc_dt", stand_stabilizer_config_.wbc_mpc_dt);
     this->get_parameter("stand_wbc_target_roll", stand_stabilizer_config_.wbc_target_roll);
     this->get_parameter("stand_wbc_target_pitch", stand_stabilizer_config_.wbc_target_pitch);
     this->get_parameter("stand_wbc_mpc_orientation_weight", stand_stabilizer_config_.wbc_mpc_orientation_weight);
     this->get_parameter("stand_wbc_mpc_angular_rate_weight", stand_stabilizer_config_.wbc_mpc_angular_rate_weight);
     this->get_parameter("stand_wbc_mpc_com_weight", stand_stabilizer_config_.wbc_mpc_com_weight);
     this->get_parameter("stand_wbc_mpc_com_velocity_weight", stand_stabilizer_config_.wbc_mpc_com_velocity_weight);
-    this->get_parameter("stand_wbc_mpc_control_weight", stand_stabilizer_config_.wbc_mpc_control_weight);
+    this->get_parameter("stand_wbc_mpc_terminal_weight_scale", stand_stabilizer_config_.wbc_mpc_terminal_weight_scale);
+    this->get_parameter("stand_wbc_mpc_input_smooth_weight", stand_stabilizer_config_.wbc_mpc_input_smooth_weight);
+    this->get_parameter("stand_wbc_mpc_force_weight", stand_stabilizer_config_.wbc_mpc_force_weight);
+    this->get_parameter("stand_wbc_mpc_qp_iterations", stand_stabilizer_config_.wbc_mpc_qp_iterations);
+    this->get_parameter("stand_wbc_mpc_terminal_cost_enabled", stand_stabilizer_config_.wbc_mpc_terminal_cost_enabled);
+    this->get_parameter("stand_wbc_mpc_input_smoothing_enabled", stand_stabilizer_config_.wbc_mpc_input_smoothing_enabled);
+    this->get_parameter("stand_wbc_mpc_contact_schedule_enabled", stand_stabilizer_config_.wbc_mpc_contact_schedule_enabled);
+    this->get_parameter("stand_wbc_mpc_solver_constraints_enabled", stand_stabilizer_config_.wbc_mpc_solver_constraints_enabled);
+    this->get_parameter("stand_wbc_mpc_zero_swing_force_constraint_enabled", stand_stabilizer_config_.wbc_mpc_zero_swing_force_constraint_enabled);
+    this->get_parameter("stand_wbc_mpc_normal_force_constraint_enabled", stand_stabilizer_config_.wbc_mpc_normal_force_constraint_enabled);
+    this->get_parameter("stand_wbc_mpc_delta_force_constraint_enabled", stand_stabilizer_config_.wbc_mpc_delta_force_constraint_enabled);
+    this->get_parameter("stand_wbc_mpc_friction_cone_constraint_enabled", stand_stabilizer_config_.wbc_mpc_friction_cone_constraint_enabled);
+    this->get_parameter("stand_wbc_mpc_friction_barrier_mu", stand_stabilizer_config_.wbc_mpc_friction_barrier_mu);
+    this->get_parameter("stand_wbc_mpc_friction_barrier_delta", stand_stabilizer_config_.wbc_mpc_friction_barrier_delta);
+    this->get_parameter("stand_wbc_mpc_friction_regularization", stand_stabilizer_config_.wbc_mpc_friction_regularization);
     this->get_parameter("stand_wbc_mpc_max_angular_accel", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
     this->get_parameter("stand_wbc_mpc_max_com_accel", stand_stabilizer_config_.wbc_mpc_max_com_accel);
+    this->get_parameter("stand_wbc_mpc_max_contact_force_delta", stand_stabilizer_config_.wbc_mpc_max_contact_force_delta);
+    this->get_parameter("stand_wbc_state_estimation_enabled", stand_stabilizer_config_.wbc_state_estimation_enabled);
+    this->get_parameter("stand_wbc_state_velocity_filter_alpha", stand_stabilizer_config_.wbc_state_velocity_filter_alpha);
+    this->get_parameter("stand_wbc_state_max_base_linear_velocity", stand_stabilizer_config_.wbc_state_max_base_linear_velocity);
+    this->get_parameter("stand_wbc_contact_force_qp_enabled", stand_stabilizer_config_.wbc_contact_force_qp_enabled);
+    this->get_parameter("stand_wbc_whole_body_qp_enabled", stand_stabilizer_config_.wbc_whole_body_qp_enabled);
+    this->get_parameter("stand_wbc_floating_base_eom_enabled", stand_stabilizer_config_.wbc_floating_base_eom_enabled);
+    this->get_parameter("stand_wbc_stance_contact_constraint_enabled", stand_stabilizer_config_.wbc_stance_contact_constraint_enabled);
+    this->get_parameter("stand_wbc_friction_constraint_enabled", stand_stabilizer_config_.wbc_friction_constraint_enabled);
+    this->get_parameter("stand_wbc_torque_limit_constraint_enabled", stand_stabilizer_config_.wbc_torque_limit_constraint_enabled);
+    this->get_parameter("stand_wbc_base_accel_task_enabled", stand_stabilizer_config_.wbc_base_accel_task_enabled);
+    this->get_parameter("stand_wbc_contact_force_task_enabled", stand_stabilizer_config_.wbc_contact_force_task_enabled);
+    this->get_parameter("stand_wbc_swing_task_enabled", stand_stabilizer_config_.wbc_swing_task_enabled);
+    this->get_parameter("stand_wbc_qddot_regularization_enabled", stand_stabilizer_config_.wbc_qddot_regularization_enabled);
+    this->get_parameter("stand_wbc_tau_regularization_enabled", stand_stabilizer_config_.wbc_tau_regularization_enabled);
     this->get_parameter("stand_wbc_enable_torque", stand_stabilizer_config_.wbc_torque_enabled);
     this->get_parameter("stand_wbc_qp_iterations", stand_stabilizer_config_.wbc_qp_iterations);
+    this->get_parameter("stand_wbc_active_set_iterations", stand_stabilizer_config_.wbc_active_set_iterations);
     this->get_parameter("stand_wbc_friction_coefficient", stand_stabilizer_config_.wbc_friction_coefficient);
     this->get_parameter("stand_wbc_min_normal_force", stand_stabilizer_config_.wbc_min_normal_force);
     this->get_parameter("stand_wbc_max_normal_force", stand_stabilizer_config_.wbc_max_normal_force);
@@ -134,6 +251,57 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_smooth_weight", stand_stabilizer_config_.wbc_smooth_weight);
     this->get_parameter("stand_wbc_max_body_moment", stand_stabilizer_config_.wbc_max_body_moment);
     this->get_parameter("stand_wbc_max_joint_torque", stand_stabilizer_config_.wbc_max_joint_torque);
+    this->get_parameter("stand_wbc_foot_half_length", stand_stabilizer_config_.wbc_foot_half_length);
+    this->get_parameter("stand_wbc_foot_half_width", stand_stabilizer_config_.wbc_foot_half_width);
+    this->get_parameter("stand_wbc_foot_center_x", stand_stabilizer_config_.wbc_foot_center_x);
+    this->get_parameter("stand_wbc_foot_contact_z", stand_stabilizer_config_.wbc_foot_contact_z);
+    this->get_parameter("stand_wbc_virtual_foot_corners_enabled", stand_stabilizer_config_.wbc_virtual_foot_corners_enabled);
+    this->get_parameter("stand_wbc_step_recovery_enabled", stand_stabilizer_config_.wbc_step_recovery_enabled);
+    this->get_parameter("stand_wbc_step_placement_enabled", stand_stabilizer_config_.wbc_step_placement_enabled);
+    this->get_parameter("stand_wbc_step_recovery_roll_trigger", stand_stabilizer_config_.wbc_step_recovery_roll_trigger);
+    this->get_parameter("stand_wbc_step_recovery_pitch_trigger", stand_stabilizer_config_.wbc_step_recovery_pitch_trigger);
+    this->get_parameter("stand_wbc_step_recovery_rate_trigger", stand_stabilizer_config_.wbc_step_recovery_rate_trigger);
+    this->get_parameter("stand_wbc_step_recovery_com_trigger", stand_stabilizer_config_.wbc_step_recovery_com_trigger);
+    this->get_parameter("stand_wbc_step_recovery_com_velocity_trigger", stand_stabilizer_config_.wbc_step_recovery_com_velocity_trigger);
+    this->get_parameter("stand_wbc_step_recovery_return_roll", stand_stabilizer_config_.wbc_step_recovery_return_roll);
+    this->get_parameter("stand_wbc_step_recovery_return_pitch", stand_stabilizer_config_.wbc_step_recovery_return_pitch);
+    this->get_parameter("stand_wbc_step_recovery_return_rate", stand_stabilizer_config_.wbc_step_recovery_return_rate);
+    this->get_parameter("stand_wbc_step_recovery_return_com", stand_stabilizer_config_.wbc_step_recovery_return_com);
+    this->get_parameter("stand_wbc_step_recovery_return_com_velocity", stand_stabilizer_config_.wbc_step_recovery_return_com_velocity);
+    this->get_parameter("stand_wbc_step_recovery_steps", stand_stabilizer_config_.wbc_step_recovery_steps);
+    this->get_parameter("stand_wbc_step_recovery_swing_time", stand_stabilizer_config_.wbc_step_recovery_swing_time);
+    this->get_parameter("stand_wbc_step_recovery_double_support_time", stand_stabilizer_config_.wbc_step_recovery_double_support_time);
+    this->get_parameter("stand_wbc_step_recovery_settle_time", stand_stabilizer_config_.wbc_step_recovery_settle_time);
+    this->get_parameter("stand_wbc_step_recovery_stable_time", stand_stabilizer_config_.wbc_step_recovery_stable_time);
+    this->get_parameter("stand_wbc_step_recovery_cooldown", stand_stabilizer_config_.wbc_step_recovery_cooldown);
+    this->get_parameter("stand_wbc_step_recovery_max_duration", stand_stabilizer_config_.wbc_step_recovery_max_duration);
+    this->get_parameter("stand_wbc_step_recovery_step_x_pitch_gain", stand_stabilizer_config_.wbc_step_recovery_step_x_pitch_gain);
+    this->get_parameter("stand_wbc_step_recovery_step_x_rate_gain", stand_stabilizer_config_.wbc_step_recovery_step_x_rate_gain);
+    this->get_parameter("stand_wbc_step_recovery_step_x_com_gain", stand_stabilizer_config_.wbc_step_recovery_step_x_com_gain);
+    this->get_parameter("stand_wbc_step_recovery_step_x_com_velocity_gain", stand_stabilizer_config_.wbc_step_recovery_step_x_com_velocity_gain);
+    this->get_parameter("stand_wbc_step_recovery_step_y_roll_gain", stand_stabilizer_config_.wbc_step_recovery_step_y_roll_gain);
+    this->get_parameter("stand_wbc_step_recovery_step_y_rate_gain", stand_stabilizer_config_.wbc_step_recovery_step_y_rate_gain);
+    this->get_parameter("stand_wbc_step_recovery_step_y_com_gain", stand_stabilizer_config_.wbc_step_recovery_step_y_com_gain);
+    this->get_parameter("stand_wbc_step_recovery_step_y_com_velocity_gain", stand_stabilizer_config_.wbc_step_recovery_step_y_com_velocity_gain);
+    this->get_parameter("stand_wbc_step_recovery_capture_time", stand_stabilizer_config_.wbc_step_recovery_capture_time);
+    this->get_parameter("stand_wbc_step_recovery_capture_gain", stand_stabilizer_config_.wbc_step_recovery_capture_gain);
+    this->get_parameter("stand_wbc_step_recovery_min_step_x", stand_stabilizer_config_.wbc_step_recovery_min_step_x);
+    this->get_parameter("stand_wbc_step_recovery_min_step_y", stand_stabilizer_config_.wbc_step_recovery_min_step_y);
+    this->get_parameter("stand_wbc_step_recovery_max_step_x", stand_stabilizer_config_.wbc_step_recovery_max_step_x);
+    this->get_parameter("stand_wbc_step_recovery_max_step_y", stand_stabilizer_config_.wbc_step_recovery_max_step_y);
+    this->get_parameter("stand_wbc_step_recovery_swing_height", stand_stabilizer_config_.wbc_step_recovery_swing_height);
+    this->get_parameter("stand_wbc_step_recovery_start_with_left", stand_stabilizer_config_.wbc_step_recovery_start_with_left);
+    this->get_parameter("stand_wbc_step_recovery_first_swing_left_on_positive_roll", stand_stabilizer_config_.wbc_step_recovery_first_swing_left_on_positive_roll);
+    this->get_parameter("stand_wbc_step_recovery_sagittal_sign", stand_stabilizer_config_.wbc_step_recovery_sagittal_sign);
+    this->get_parameter("stand_wbc_step_recovery_lateral_sign", stand_stabilizer_config_.wbc_step_recovery_lateral_sign);
+    this->get_parameter("stand_wbc_swing_tracking_weight", stand_stabilizer_config_.wbc_swing_tracking_weight);
+    this->get_parameter("stand_wbc_swing_ik_enabled", stand_stabilizer_config_.wbc_swing_ik_enabled);
+    this->get_parameter("stand_wbc_swing_kp", stand_stabilizer_config_.wbc_swing_kp);
+    this->get_parameter("stand_wbc_swing_kd", stand_stabilizer_config_.wbc_swing_kd);
+    this->get_parameter("stand_wbc_swing_ik_gain", stand_stabilizer_config_.wbc_swing_ik_gain);
+    this->get_parameter("stand_wbc_swing_ik_damping", stand_stabilizer_config_.wbc_swing_ik_damping);
+    this->get_parameter("stand_wbc_swing_max_joint_delta", stand_stabilizer_config_.wbc_swing_max_joint_delta);
+    this->get_parameter("stand_wbc_swing_max_joint_velocity", stand_stabilizer_config_.wbc_swing_max_joint_velocity);
     this->get_parameter("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
     if (!stand_stabilizer_config_.whole_body_model_path.empty()) {
         const std::filesystem::path model_path(stand_stabilizer_config_.whole_body_model_path);
@@ -152,6 +320,9 @@ void InferenceNode::load_config() {
     if (joint_num_ <= 0) {
         throw std::runtime_error("joint_num must be positive");
     }
+    if (clip_cmd_.size() != 6) {
+        throw std::runtime_error("clip_cmd must contain [min_vx, max_vx, min_vy, max_vy, min_wz, max_wz]");
+    }
     if (usd2urdf_.size() != static_cast<size_t>(joint_num_)) {
         throw std::runtime_error("usd2urdf must have the same size as joint_num");
     }
@@ -169,18 +340,38 @@ void InferenceNode::load_config() {
     }
     stand_stabilizer_config_.joint_num = joint_num_;
     stand_stabilizer_config_.dt = dt_;
+    const auto is_supported_wbc_mpc_backend = [](const std::string& backend) {
+        return backend == "disabled" || backend == "ocs2";
+    };
     if (stand_stabilizer_config_.wbc_mpc_horizon <= 0 ||
+        stand_stabilizer_config_.wbc_mpc_dt <= 0.0f ||
+        !is_supported_wbc_mpc_backend(stand_stabilizer_config_.wbc_mpc_backend) ||
         stand_stabilizer_config_.wbc_mpc_orientation_weight < 0.0f ||
         stand_stabilizer_config_.wbc_mpc_angular_rate_weight < 0.0f ||
         stand_stabilizer_config_.wbc_mpc_com_weight < 0.0f ||
         stand_stabilizer_config_.wbc_mpc_com_velocity_weight < 0.0f ||
-        stand_stabilizer_config_.wbc_mpc_control_weight <= 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_terminal_weight_scale < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_input_smooth_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_force_weight <= 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_qp_iterations < 0 ||
+        stand_stabilizer_config_.wbc_mpc_friction_barrier_mu < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_friction_barrier_delta <= 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_friction_regularization <= 0.0f ||
         stand_stabilizer_config_.wbc_mpc_max_angular_accel < 0.0f ||
-        stand_stabilizer_config_.wbc_mpc_max_com_accel < 0.0f) {
+        stand_stabilizer_config_.wbc_mpc_max_com_accel < 0.0f ||
+        stand_stabilizer_config_.wbc_mpc_max_contact_force_delta < 0.0f) {
         throw std::runtime_error("stand WBC MPC parameters are invalid");
+    }
+    if (stand_stabilizer_config_.wbc_state_velocity_filter_alpha < 0.0f ||
+        stand_stabilizer_config_.wbc_state_velocity_filter_alpha > 1.0f ||
+        stand_stabilizer_config_.wbc_state_max_base_linear_velocity < 0.0f) {
+        throw std::runtime_error("stand WBC state estimation parameters are invalid");
     }
     if (stand_stabilizer_config_.wbc_qp_iterations <= 0) {
         throw std::runtime_error("stand_wbc_qp_iterations must be positive");
+    }
+    if (stand_stabilizer_config_.wbc_active_set_iterations <= 0) {
+        throw std::runtime_error("stand_wbc_active_set_iterations must be positive");
     }
     if (stand_stabilizer_config_.wbc_friction_coefficient < 0.0f ||
         stand_stabilizer_config_.wbc_min_normal_force < 0.0f ||
@@ -190,8 +381,47 @@ void InferenceNode::load_config() {
         stand_stabilizer_config_.wbc_regularization_weight < 0.0f ||
         stand_stabilizer_config_.wbc_smooth_weight < 0.0f ||
         stand_stabilizer_config_.wbc_max_body_moment < 0.0f ||
-        stand_stabilizer_config_.wbc_max_joint_torque < 0.0f) {
+        stand_stabilizer_config_.wbc_max_joint_torque < 0.0f ||
+        stand_stabilizer_config_.wbc_foot_half_length < 0.0f ||
+        stand_stabilizer_config_.wbc_foot_half_width < 0.0f) {
         throw std::runtime_error("stand WBC parameters are invalid");
+    }
+    if (stand_stabilizer_config_.wbc_step_recovery_roll_trigger < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_pitch_trigger < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_rate_trigger < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_com_trigger < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_com_velocity_trigger < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_return_roll < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_return_pitch < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_return_rate < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_return_com < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_return_com_velocity < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_steps < 0 ||
+        stand_stabilizer_config_.wbc_step_recovery_swing_time <= 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_double_support_time < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_settle_time < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_stable_time < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_cooldown < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_max_duration < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_min_step_x < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_min_step_y < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_max_step_x < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_max_step_y < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_min_step_x >
+            stand_stabilizer_config_.wbc_step_recovery_max_step_x ||
+        stand_stabilizer_config_.wbc_step_recovery_min_step_y >
+            stand_stabilizer_config_.wbc_step_recovery_max_step_y ||
+        stand_stabilizer_config_.wbc_step_recovery_capture_time < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_capture_gain < 0.0f ||
+        stand_stabilizer_config_.wbc_step_recovery_swing_height < 0.0f ||
+        stand_stabilizer_config_.wbc_swing_tracking_weight < 0.0f ||
+        stand_stabilizer_config_.wbc_swing_kp < 0.0f ||
+        stand_stabilizer_config_.wbc_swing_kd < 0.0f ||
+        stand_stabilizer_config_.wbc_swing_ik_gain < 0.0f ||
+        stand_stabilizer_config_.wbc_swing_ik_damping < 0.0f ||
+        stand_stabilizer_config_.wbc_swing_max_joint_delta < 0.0f ||
+        stand_stabilizer_config_.wbc_swing_max_joint_velocity < 0.0f) {
+        throw std::runtime_error("stand WBC step recovery parameters are invalid");
     }
     if (stand_stabilizer_config_.wbc_torque_joint_scale.empty()) {
         stand_stabilizer_config_.wbc_torque_joint_scale.assign(joint_num_, 0.0);
@@ -318,7 +548,6 @@ void InferenceNode::load_config() {
         }
         policies_.push_back(std::move(policy));
     }
-
     RCLCPP_INFO(this->get_logger(), "robot_name: %s", robot_name.c_str());
     RCLCPP_INFO(this->get_logger(), "policy_name: %s", policy_name.c_str());
     RCLCPP_INFO(this->get_logger(), "robot_config: %s", robot_config_path_.c_str());
@@ -359,18 +588,66 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_right_foot_link: %s", stand_stabilizer_config_.whole_body_right_foot_link.c_str());
     print_vector<std::string>("stand_whole_body_joint_order", stand_stabilizer_config_.whole_body_joint_order);
     RCLCPP_INFO(this->get_logger(), "stand_validate_whole_body_model: %s", stand_stabilizer_config_.validate_whole_body_model ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_enabled: %s", stand_stabilizer_config_.wbc_mpc_enabled ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_backend: %s", stand_stabilizer_config_.wbc_mpc_backend.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_horizon: %d", stand_stabilizer_config_.wbc_mpc_horizon);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_dt: %f", stand_stabilizer_config_.wbc_mpc_dt);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_target_roll: %f", stand_stabilizer_config_.wbc_target_roll);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_target_pitch: %f", stand_stabilizer_config_.wbc_target_pitch);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_orientation_weight: %f", stand_stabilizer_config_.wbc_mpc_orientation_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_angular_rate_weight: %f", stand_stabilizer_config_.wbc_mpc_angular_rate_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_com_weight: %f", stand_stabilizer_config_.wbc_mpc_com_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_com_velocity_weight: %f", stand_stabilizer_config_.wbc_mpc_com_velocity_weight);
-    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_control_weight: %f", stand_stabilizer_config_.wbc_mpc_control_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_terminal_weight_scale: %f", stand_stabilizer_config_.wbc_mpc_terminal_weight_scale);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_input_smooth_weight: %f", stand_stabilizer_config_.wbc_mpc_input_smooth_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_force_weight: %f", stand_stabilizer_config_.wbc_mpc_force_weight);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_qp_iterations: %d", stand_stabilizer_config_.wbc_mpc_qp_iterations);
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_mpc_cost_switches: terminal=%s input_smoothing=%s contact_schedule=%s",
+                stand_stabilizer_config_.wbc_mpc_terminal_cost_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_input_smoothing_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_contact_schedule_enabled ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_mpc_solver_constraints: enabled=%s zero_swing_force=%s normal_force=%s delta_force=%s friction_cone=%s barrier=[%f, %f] friction_regularization=%f",
+                stand_stabilizer_config_.wbc_mpc_solver_constraints_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_zero_swing_force_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_normal_force_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_delta_force_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_friction_cone_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_friction_barrier_mu,
+                stand_stabilizer_config_.wbc_mpc_friction_barrier_delta,
+                stand_stabilizer_config_.wbc_mpc_friction_regularization);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_angular_accel: %f", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_com_accel: %f", stand_stabilizer_config_.wbc_mpc_max_com_accel);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_contact_force_delta: %f", stand_stabilizer_config_.wbc_mpc_max_contact_force_delta);
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_state_estimation: enabled=%s velocity_filter_alpha=%f max_base_linear_velocity=%f",
+                stand_stabilizer_config_.wbc_state_estimation_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_state_velocity_filter_alpha,
+                stand_stabilizer_config_.wbc_state_max_base_linear_velocity);
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_algorithm_switches: contact_force_qp=%s whole_body_qp=%s swing_ik=%s virtual_foot_corners=%s step_placement=%s",
+                stand_stabilizer_config_.wbc_contact_force_qp_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_whole_body_qp_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_swing_ik_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_virtual_foot_corners_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_step_placement_enabled ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_constraint_switches: eom=%s stance_contact=%s friction=%s torque_limit=%s",
+                stand_stabilizer_config_.wbc_floating_base_eom_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_stance_contact_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_friction_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_torque_limit_constraint_enabled ? "true" : "false");
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_task_switches: base_accel=%s contact_force=%s swing=%s qddot_reg=%s tau_reg=%s",
+                stand_stabilizer_config_.wbc_base_accel_task_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_contact_force_task_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_swing_task_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_qddot_regularization_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_tau_regularization_enabled ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "stand_wbc_enable_torque: %s", stand_stabilizer_config_.wbc_torque_enabled ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "stand_wbc_qp_iterations: %d", stand_stabilizer_config_.wbc_qp_iterations);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_active_set_iterations: %d", stand_stabilizer_config_.wbc_active_set_iterations);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_friction_coefficient: %f", stand_stabilizer_config_.wbc_friction_coefficient);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_normal_force_limit: [%f, %f]",
                 stand_stabilizer_config_.wbc_min_normal_force,
@@ -381,6 +658,61 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_wbc_smooth_weight: %f", stand_stabilizer_config_.wbc_smooth_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_body_moment: %f", stand_stabilizer_config_.wbc_max_body_moment);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_joint_torque: %f", stand_stabilizer_config_.wbc_max_joint_torque);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_foot_geometry: half_length=%f half_width=%f center_x=%f contact_z=%f",
+                stand_stabilizer_config_.wbc_foot_half_length,
+                stand_stabilizer_config_.wbc_foot_half_width,
+                stand_stabilizer_config_.wbc_foot_center_x,
+                stand_stabilizer_config_.wbc_foot_contact_z);
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_step_recovery: enabled=%s trigger_rp_rate_com=[%f, %f, %f, %f, %f] return_rp_rate_com=[%f, %f, %f, %f, %f]",
+                stand_stabilizer_config_.wbc_step_recovery_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_step_recovery_roll_trigger,
+                stand_stabilizer_config_.wbc_step_recovery_pitch_trigger,
+                stand_stabilizer_config_.wbc_step_recovery_rate_trigger,
+                stand_stabilizer_config_.wbc_step_recovery_com_trigger,
+                stand_stabilizer_config_.wbc_step_recovery_com_velocity_trigger,
+                stand_stabilizer_config_.wbc_step_recovery_return_roll,
+                stand_stabilizer_config_.wbc_step_recovery_return_pitch,
+                stand_stabilizer_config_.wbc_step_recovery_return_rate,
+                stand_stabilizer_config_.wbc_step_recovery_return_com,
+                stand_stabilizer_config_.wbc_step_recovery_return_com_velocity);
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_step_timing: steps=%d double_support=%f swing=%f settle=%f stable=%f cooldown=%f max_duration=%f",
+                stand_stabilizer_config_.wbc_step_recovery_steps,
+                stand_stabilizer_config_.wbc_step_recovery_double_support_time,
+                stand_stabilizer_config_.wbc_step_recovery_swing_time,
+                stand_stabilizer_config_.wbc_step_recovery_settle_time,
+                stand_stabilizer_config_.wbc_step_recovery_stable_time,
+                stand_stabilizer_config_.wbc_step_recovery_cooldown,
+                stand_stabilizer_config_.wbc_step_recovery_max_duration);
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_step_gains: x[pitch=%f rate=%f com=%f com_vel=%f] y[roll=%f rate=%f com=%f com_vel=%f] capture=[time=%f gain=%f] min_xy=[%f, %f] max_xy=[%f, %f] signs=[%f, %f]",
+                stand_stabilizer_config_.wbc_step_recovery_step_x_pitch_gain,
+                stand_stabilizer_config_.wbc_step_recovery_step_x_rate_gain,
+                stand_stabilizer_config_.wbc_step_recovery_step_x_com_gain,
+                stand_stabilizer_config_.wbc_step_recovery_step_x_com_velocity_gain,
+                stand_stabilizer_config_.wbc_step_recovery_step_y_roll_gain,
+                stand_stabilizer_config_.wbc_step_recovery_step_y_rate_gain,
+                stand_stabilizer_config_.wbc_step_recovery_step_y_com_gain,
+                stand_stabilizer_config_.wbc_step_recovery_step_y_com_velocity_gain,
+                stand_stabilizer_config_.wbc_step_recovery_capture_time,
+                stand_stabilizer_config_.wbc_step_recovery_capture_gain,
+                stand_stabilizer_config_.wbc_step_recovery_min_step_x,
+                stand_stabilizer_config_.wbc_step_recovery_min_step_y,
+                stand_stabilizer_config_.wbc_step_recovery_max_step_x,
+                stand_stabilizer_config_.wbc_step_recovery_max_step_y,
+                stand_stabilizer_config_.wbc_step_recovery_sagittal_sign,
+                stand_stabilizer_config_.wbc_step_recovery_lateral_sign);
+    RCLCPP_INFO(this->get_logger(),
+                "stand_wbc_swing: height=%f tracking_weight=%f kp=%f kd=%f ik_gain=%f ik_damping=%f max_delta=%f max_vel=%f",
+                stand_stabilizer_config_.wbc_step_recovery_swing_height,
+                stand_stabilizer_config_.wbc_swing_tracking_weight,
+                stand_stabilizer_config_.wbc_swing_kp,
+                stand_stabilizer_config_.wbc_swing_kd,
+                stand_stabilizer_config_.wbc_swing_ik_gain,
+                stand_stabilizer_config_.wbc_swing_ik_damping,
+                stand_stabilizer_config_.wbc_swing_max_joint_delta,
+                stand_stabilizer_config_.wbc_swing_max_joint_velocity);
     print_vector<double>("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
     print_vector<float>("stand_kp", stand_kp_);
     print_vector<float>("stand_kd", stand_kd_);

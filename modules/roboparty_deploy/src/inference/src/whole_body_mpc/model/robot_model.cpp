@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 // Copyright (C) 2025-2026 Luo1imasi
 
-#include "whole_body_mpc/robot_model.hpp"
+#include "whole_body_mpc/model/robot_model.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -200,6 +200,8 @@ RobotModel::Kinematics RobotModel::compute_kinematics(
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.left_foot_jacobian);
     pinocchio::getFrameJacobian(pin_model, pin_data, impl_->right_foot_frame_id,
                                 pinocchio::LOCAL_WORLD_ALIGNED, output.right_foot_jacobian);
+    output.left_foot_velocity = (output.left_foot_jacobian * v).head<3>();
+    output.right_foot_velocity = (output.right_foot_jacobian * v).head<3>();
 
     Eigen::Matrix<double, 6, Eigen::Dynamic> jacobian_dot;
     jacobian_dot.setZero(6, pin_model.nv);

@@ -29,6 +29,8 @@ class RobotModel {
         Eigen::Vector3d com_velocity = Eigen::Vector3d::Zero();
         Eigen::Isometry3d left_foot_pose = Eigen::Isometry3d::Identity();
         Eigen::Isometry3d right_foot_pose = Eigen::Isometry3d::Identity();
+        Eigen::Vector3d left_foot_velocity = Eigen::Vector3d::Zero();
+        Eigen::Vector3d right_foot_velocity = Eigen::Vector3d::Zero();
         Eigen::Matrix<double, 6, Eigen::Dynamic> base_jacobian;
         Eigen::Matrix<double, 6, Eigen::Dynamic> left_foot_jacobian;
         Eigen::Matrix<double, 6, Eigen::Dynamic> right_foot_jacobian;

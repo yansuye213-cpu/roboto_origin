@@ -231,10 +231,22 @@ fi
 # 检查是否已source setup文件
 if [ -z "$AMENT_PREFIX_PATH" ]; then
     print_info "未检测到ROS 2环境，正在执行source..."
-    source /opt/ros/humble/setup.bash || {
-        print_error "无法source /opt/ros/humble/setup.bash，请检查路径是否正确"
+    if [ -f /opt/ros/kilted/setup.bash ]; then
+        source /opt/ros/kilted/setup.bash
+    elif [ -f /opt/ros/humble/setup.bash ]; then
+        source /opt/ros/humble/setup.bash
+    else
+        print_error "无法找到 ROS 2 setup.bash，请检查 /opt/ros/kilted 或 /opt/ros/humble"
         exit 1
-    }
+    fi
+fi
+
+OCS2_SETUP="${OCS2_WS_SETUP:-/home/yansuye/ocs2_ws/install/setup.bash}"
+if [ -f "$OCS2_SETUP" ]; then
+    print_info "加载 OCS2 环境: $OCS2_SETUP"
+    source "$OCS2_SETUP"
+else
+    print_info "未找到 OCS2 环境: $OCS2_SETUP，将只使用非 OCS2 MPC 后端"
 fi
 
 # 检查 colcon 和 ros2
@@ -255,7 +267,7 @@ fi
 
 # 编译推理包
 print_info "编译推理包..."
-colcon build --symlink-install || {
+colcon build --base-paths src --symlink-install || {
     print_error "推理包编译失败"
     exit 1
 }
