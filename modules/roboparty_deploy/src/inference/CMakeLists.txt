@@ -68,6 +68,8 @@ if(ocs2_sqp_FOUND AND TARGET ocs2_sqp::ocs2_sqp
   list(APPEND OCS2_SOURCES
     src/whole_body_mpc/model/centroidal_model_info.cpp
     src/whole_body_mpc/reference/mode_schedule_adapter.cpp
+    src/whole_body_mpc/reference/swing_trajectory.cpp
+    src/whole_body_mpc/reference/switched_model_reference_manager.cpp
     src/whole_body_mpc/mpc/ocs2_centroidal_mpc.cpp
   )
   list(APPEND OCS2_DEPENDENCIES
@@ -114,6 +116,7 @@ add_executable(inference_node
   src/whole_body_mpc/reference/foot_placement_planner.cpp
   src/whole_body_mpc/reference/recovery_gait_planner.cpp
   src/whole_body_mpc/wbc/contact_force_qp.cpp
+  src/whole_body_mpc/wbc/whole_body_wbc.cpp
   src/whole_body_mpc/whole_body_mpc_controller.cpp
 )
 target_include_directories(inference_node

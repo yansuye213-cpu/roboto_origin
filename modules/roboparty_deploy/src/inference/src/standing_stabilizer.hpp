@@ -25,6 +25,9 @@ class StandingStabilizer {
         bool validate_whole_body_model = false;
         bool wbc_mpc_enabled = true;
         std::string wbc_mpc_backend = "ocs2";
+        bool wbc_mpc_mrt_enabled = false;
+        bool wbc_mpc_mrt_first_solve_blocking = true;
+        float wbc_mpc_mrt_max_policy_age = 0.08f;
         int wbc_mpc_horizon = 20;
         float wbc_mpc_dt = 0.012f;
         float wbc_target_roll = 0.0f;
@@ -45,6 +48,9 @@ class StandingStabilizer {
         bool wbc_mpc_normal_force_constraint_enabled = true;
         bool wbc_mpc_delta_force_constraint_enabled = true;
         bool wbc_mpc_friction_cone_constraint_enabled = true;
+        bool wbc_mpc_stance_zero_velocity_constraint_enabled = true;
+        bool wbc_mpc_swing_normal_velocity_constraint_enabled = true;
+        bool wbc_mpc_swing_position_constraint_enabled = true;
         float wbc_mpc_friction_barrier_mu = 0.1f;
         float wbc_mpc_friction_barrier_delta = 5.0f;
         float wbc_mpc_friction_regularization = 25.0f;
@@ -55,6 +61,13 @@ class StandingStabilizer {
         float wbc_mpc_yaw_weight = 1.0f;
         float wbc_mpc_joint_angle_weight = 0.5f;
         float wbc_mpc_joint_velocity_weight = 0.02f;
+        float wbc_mpc_swing_position_weight = 10.0f;
+        bool wbc_mpc_joint_command_enabled = false;
+        float wbc_mpc_joint_command_position_gain = 0.25f;
+        float wbc_mpc_joint_command_velocity_scale = 1.0f;
+        float wbc_mpc_swing_time_scale = 0.15f;
+        float wbc_mpc_swing_lift_off_velocity = 0.0f;
+        float wbc_mpc_swing_touch_down_velocity = 0.0f;
         std::string wbc_mpc_ad_model_folder = "/tmp/roboparty_ocs2";
         bool wbc_mpc_ad_recompile = false;
         bool wbc_mpc_ad_verbose = false;
@@ -63,6 +76,7 @@ class StandingStabilizer {
         float wbc_state_max_base_linear_velocity = 0.8f;
         bool wbc_contact_force_qp_enabled = true;
         bool wbc_whole_body_qp_enabled = true;
+        std::string wbc_solver = "weighted";
         bool wbc_floating_base_eom_enabled = true;
         bool wbc_stance_contact_constraint_enabled = true;
         bool wbc_friction_constraint_enabled = true;

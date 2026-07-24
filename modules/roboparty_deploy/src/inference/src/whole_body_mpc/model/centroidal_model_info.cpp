@@ -99,6 +99,25 @@ Eigen::VectorXd Ocs2CentroidalModel::model_order_joint_vector(
     return model_order;
 }
 
+Eigen::VectorXd Ocs2CentroidalModel::configured_order_joint_vector(
+    const Eigen::VectorXd& model_order_vector) const {
+    if (model_order_vector.size() != static_cast<int>(info_.actuatedDofNum)) {
+        throw std::runtime_error(
+            "model joint vector size does not match OCS2 centroidal actuated DoF");
+    }
+    Eigen::VectorXd configured_order =
+        Eigen::VectorXd::Zero(
+            static_cast<int>(model_joint_index_by_config_joint_.size()));
+    for (size_t i = 0; i < model_joint_index_by_config_joint_.size(); i++) {
+        const int model_index = model_joint_index_by_config_joint_[i];
+        if (model_index < 0 || model_index >= model_order_vector.size()) {
+            throw std::runtime_error("OCS2 centroidal model joint index is invalid");
+        }
+        configured_order[static_cast<int>(i)] = model_order_vector[model_index];
+    }
+    return configured_order;
+}
+
 std::unique_ptr<Ocs2CentroidalModel> create_ocs2_centroidal_model(
     const Ocs2CentroidalModelConfig& config) {
     if (config.urdf_path.empty()) {

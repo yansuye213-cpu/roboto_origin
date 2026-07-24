@@ -5,8 +5,11 @@
 
 #include "whole_body_mpc/model/centroidal_model_info.hpp"
 #include "whole_body_mpc/reference/mode_schedule_adapter.hpp"
+#include "whole_body_mpc/reference/switched_model_reference_manager.hpp"
 
 #include <ocs2_centroidal_model/AccessHelperFunctions.h>
+#include <ocs2_centroidal_model/CentroidalModelPinocchioMapping.h>
+#include <ocs2_centroidal_model/ModelHelperFunctions.h>
 #include <ocs2_centroidal_model/PinocchioCentroidalDynamicsAD.h>
 #include <ocs2_core/constraint/StateInputConstraint.h>
 #include <ocs2_core/cost/QuadraticStateCost.h>
@@ -14,7 +17,10 @@
 #include <ocs2_core/dynamics/SystemDynamicsBase.h>
 #include <ocs2_core/initialization/Initializer.h>
 #include <ocs2_core/penalties/penalties/RelaxedBarrierPenalty.h>
+#include <ocs2_core/penalties/penalties/QuadraticPenalty.h>
 #include <ocs2_core/soft_constraint/StateInputSoftConstraint.h>
+#include <ocs2_pinocchio_interface/PinocchioEndEffectorKinematicsCppAd.h>
+#include <ocs2_robotic_tools/end_effector/EndEffectorKinematics.h>
 
 #include <algorithm>
 #include <cmath>
@@ -154,6 +160,210 @@ class WeightCompensatingInitializer final : public ocs2::Initializer {
    private:
     ocs2::CentroidalModelInfo info_;
     std::shared_ptr<ocs2::ReferenceManager> reference_manager_;
+};
+
+std::unique_ptr<ocs2::EndEffectorKinematics<ocs2::scalar_t>>
+make_foot_kinematics(const Ocs2CentroidalModel& model,
+                     const ocs2::CentroidalModelInfo& info,
+                     const CentroidalMpcConfig& config,
+                     const std::string& foot_frame,
+                     const std::string& model_name) {
+    const ocs2::CentroidalModelInfoCppAd info_cppad = info.toCppAd();
+    const ocs2::CentroidalModelPinocchioMappingCppAd pinocchio_mapping(
+        info_cppad);
+    auto update_callback =
+        [info_cppad](const ocs2::ad_vector_t& state,
+                     ocs2::PinocchioInterfaceCppAd& pinocchio_interface_ad) {
+            const ocs2::ad_vector_t q =
+                ocs2::centroidal_model::getGeneralizedCoordinates(
+                    state, info_cppad);
+            ocs2::updateCentroidalDynamics(pinocchio_interface_ad, info_cppad,
+                                           q);
+        };
+    return std::make_unique<ocs2::PinocchioEndEffectorKinematicsCppAd>(
+        model.pinocchio_interface(), pinocchio_mapping,
+        std::vector<std::string>{foot_frame}, info.stateDim, info.inputDim,
+        update_callback, model_name, config.ad_model_folder,
+        config.ad_recompile, config.ad_verbose);
+}
+
+class FootZeroVelocityConstraint final : public ocs2::StateInputConstraint {
+   public:
+    FootZeroVelocityConstraint(
+        std::shared_ptr<SwitchedModelReferenceManager> reference_manager,
+        const ocs2::EndEffectorKinematics<ocs2::scalar_t>& kinematics,
+        size_t contact_index)
+        : ocs2::StateInputConstraint(ocs2::ConstraintOrder::Linear),
+          reference_manager_(std::move(reference_manager)),
+          kinematics_(kinematics.clone()),
+          contact_index_(contact_index) {}
+
+    FootZeroVelocityConstraint(const FootZeroVelocityConstraint& other)
+        : ocs2::StateInputConstraint(other),
+          reference_manager_(other.reference_manager_),
+          kinematics_(other.kinematics_->clone()),
+          contact_index_(other.contact_index_) {}
+
+    FootZeroVelocityConstraint* clone() const override {
+        return new FootZeroVelocityConstraint(*this);
+    }
+
+    bool isActive(ocs2::scalar_t time) const override {
+        return foot_in_contact(reference_manager_->contact_flags(time),
+                               contact_index_);
+    }
+
+    size_t getNumConstraints(ocs2::scalar_t) const override { return 3; }
+
+    ocs2::vector_t getValue(ocs2::scalar_t,
+                            const ocs2::vector_t& state,
+                            const ocs2::vector_t& input,
+                            const ocs2::PreComputation&) const override {
+        return kinematics_->getVelocity(state, input).front();
+    }
+
+    ocs2::VectorFunctionLinearApproximation getLinearApproximation(
+        ocs2::scalar_t,
+        const ocs2::vector_t& state,
+        const ocs2::vector_t& input,
+        const ocs2::PreComputation&) const override {
+        return kinematics_->getVelocityLinearApproximation(state, input)
+            .front();
+    }
+
+   private:
+    std::shared_ptr<SwitchedModelReferenceManager> reference_manager_;
+    std::unique_ptr<ocs2::EndEffectorKinematics<ocs2::scalar_t>> kinematics_;
+    size_t contact_index_ = 0;
+};
+
+class SwingFootNormalVelocityConstraint final
+    : public ocs2::StateInputConstraint {
+   public:
+    SwingFootNormalVelocityConstraint(
+        std::shared_ptr<SwitchedModelReferenceManager> reference_manager,
+        const ocs2::EndEffectorKinematics<ocs2::scalar_t>& kinematics,
+        size_t contact_index)
+        : ocs2::StateInputConstraint(ocs2::ConstraintOrder::Linear),
+          reference_manager_(std::move(reference_manager)),
+          kinematics_(kinematics.clone()),
+          contact_index_(contact_index) {}
+
+    SwingFootNormalVelocityConstraint(
+        const SwingFootNormalVelocityConstraint& other)
+        : ocs2::StateInputConstraint(other),
+          reference_manager_(other.reference_manager_),
+          kinematics_(other.kinematics_->clone()),
+          contact_index_(other.contact_index_) {}
+
+    SwingFootNormalVelocityConstraint* clone() const override {
+        return new SwingFootNormalVelocityConstraint(*this);
+    }
+
+    bool isActive(ocs2::scalar_t time) const override {
+        return !foot_in_contact(reference_manager_->contact_flags(time),
+                                contact_index_);
+    }
+
+    size_t getNumConstraints(ocs2::scalar_t) const override { return 1; }
+
+    ocs2::vector_t getValue(ocs2::scalar_t time,
+                            const ocs2::vector_t& state,
+                            const ocs2::vector_t& input,
+                            const ocs2::PreComputation&) const override {
+        const Eigen::Vector3d velocity =
+            kinematics_->getVelocity(state, input).front();
+        const Eigen::Vector3d reference_velocity =
+            reference_manager_->swing_trajectory().velocity(contact_index_,
+                                                            time);
+        return (ocs2::vector_t(1) << velocity.z() - reference_velocity.z())
+            .finished();
+    }
+
+    ocs2::VectorFunctionLinearApproximation getLinearApproximation(
+        ocs2::scalar_t time,
+        const ocs2::vector_t& state,
+        const ocs2::vector_t& input,
+        const ocs2::PreComputation& pre_computation) const override {
+        (void)pre_computation;
+        const ocs2::VectorFunctionLinearApproximation velocity =
+            kinematics_->getVelocityLinearApproximation(state, input).front();
+        ocs2::VectorFunctionLinearApproximation output =
+            ocs2::VectorFunctionLinearApproximation::Zero(1, state.size(),
+                                                          input.size());
+        output.f[0] =
+            velocity.f.z() -
+            reference_manager_->swing_trajectory().velocity(contact_index_,
+                                                            time)
+                .z();
+        output.dfdx = velocity.dfdx.row(2);
+        output.dfdu = velocity.dfdu.row(2);
+        return output;
+    }
+
+   private:
+    std::shared_ptr<SwitchedModelReferenceManager> reference_manager_;
+    std::unique_ptr<ocs2::EndEffectorKinematics<ocs2::scalar_t>> kinematics_;
+    size_t contact_index_ = 0;
+};
+
+class SwingFootPositionConstraint final : public ocs2::StateInputConstraint {
+   public:
+    SwingFootPositionConstraint(
+        std::shared_ptr<SwitchedModelReferenceManager> reference_manager,
+        const ocs2::EndEffectorKinematics<ocs2::scalar_t>& kinematics,
+        size_t contact_index)
+        : ocs2::StateInputConstraint(ocs2::ConstraintOrder::Linear),
+          reference_manager_(std::move(reference_manager)),
+          kinematics_(kinematics.clone()),
+          contact_index_(contact_index) {}
+
+    SwingFootPositionConstraint(const SwingFootPositionConstraint& other)
+        : ocs2::StateInputConstraint(other),
+          reference_manager_(other.reference_manager_),
+          kinematics_(other.kinematics_->clone()),
+          contact_index_(other.contact_index_) {}
+
+    SwingFootPositionConstraint* clone() const override {
+        return new SwingFootPositionConstraint(*this);
+    }
+
+    bool isActive(ocs2::scalar_t time) const override {
+        return !foot_in_contact(reference_manager_->contact_flags(time),
+                                contact_index_);
+    }
+
+    size_t getNumConstraints(ocs2::scalar_t) const override { return 3; }
+
+    ocs2::vector_t getValue(ocs2::scalar_t time,
+                            const ocs2::vector_t& state,
+                            const ocs2::vector_t& input,
+                            const ocs2::PreComputation&) const override {
+        (void)input;
+        return kinematics_->getPosition(state).front() -
+               reference_manager_->swing_trajectory().position(contact_index_,
+                                                               time);
+    }
+
+    ocs2::VectorFunctionLinearApproximation getLinearApproximation(
+        ocs2::scalar_t time,
+        const ocs2::vector_t& state,
+        const ocs2::vector_t& input,
+        const ocs2::PreComputation& pre_computation) const override {
+        (void)input;
+        (void)pre_computation;
+        ocs2::VectorFunctionLinearApproximation output =
+            kinematics_->getPositionLinearApproximation(state).front();
+        output.f -=
+            reference_manager_->swing_trajectory().position(contact_index_,
+                                                            time);
+        return output;
+    }
+
+   private:
+    std::shared_ptr<SwitchedModelReferenceManager> reference_manager_;
+    std::unique_ptr<ocs2::EndEffectorKinematics<ocs2::scalar_t>> kinematics_;
+    size_t contact_index_ = 0;
 };
 
 class SwingFootZeroForceConstraint final : public ocs2::StateInputConstraint {
@@ -350,6 +560,147 @@ class ContactForceDeviationBoundsConstraint final
     CentroidalMpcConfig config_;
 };
 
+class JointVelocityBoundsConstraint final : public ocs2::StateInputConstraint {
+   public:
+    JointVelocityBoundsConstraint(ocs2::CentroidalModelInfo info,
+                                  double velocity_limit)
+        : ocs2::StateInputConstraint(ocs2::ConstraintOrder::Linear),
+          info_(std::move(info)),
+          velocity_limit_(std::max(velocity_limit, 0.0)) {}
+
+    JointVelocityBoundsConstraint(const JointVelocityBoundsConstraint& other)
+        : ocs2::StateInputConstraint(other),
+          info_(other.info_),
+          velocity_limit_(other.velocity_limit_) {}
+
+    JointVelocityBoundsConstraint* clone() const override {
+        return new JointVelocityBoundsConstraint(*this);
+    }
+
+    bool isActive(ocs2::scalar_t) const override {
+        return velocity_limit_ > 0.0;
+    }
+
+    size_t getNumConstraints(ocs2::scalar_t) const override {
+        return 2 * info_.actuatedDofNum;
+    }
+
+    ocs2::vector_t getValue(ocs2::scalar_t,
+                            const ocs2::vector_t& state,
+                            const ocs2::vector_t& input,
+                            const ocs2::PreComputation&) const override {
+        (void)state;
+        ocs2::vector_t value(2 * info_.actuatedDofNum);
+        const int joint_velocity_offset = 3 * info_.numThreeDofContacts +
+                                          6 * info_.numSixDofContacts;
+        for (size_t i = 0; i < info_.actuatedDofNum; i++) {
+            const double velocity =
+                input[joint_velocity_offset + static_cast<int>(i)];
+            value[2 * static_cast<int>(i)] = velocity_limit_ - velocity;
+            value[2 * static_cast<int>(i) + 1] = velocity_limit_ + velocity;
+        }
+        return value;
+    }
+
+    ocs2::VectorFunctionLinearApproximation getLinearApproximation(
+        ocs2::scalar_t time,
+        const ocs2::vector_t& state,
+        const ocs2::vector_t& input,
+        const ocs2::PreComputation& pre_computation) const override {
+        ocs2::VectorFunctionLinearApproximation approximation;
+        approximation.f = getValue(time, state, input, pre_computation);
+        approximation.dfdx =
+            ocs2::matrix_t::Zero(getNumConstraints(time), state.size());
+        approximation.dfdu =
+            ocs2::matrix_t::Zero(getNumConstraints(time), input.size());
+        const int joint_velocity_offset = 3 * info_.numThreeDofContacts +
+                                          6 * info_.numSixDofContacts;
+        for (size_t i = 0; i < info_.actuatedDofNum; i++) {
+            const int row = 2 * static_cast<int>(i);
+            const int col = joint_velocity_offset + static_cast<int>(i);
+            approximation.dfdu(row, col) = -1.0;
+            approximation.dfdu(row + 1, col) = 1.0;
+        }
+        return approximation;
+    }
+
+   private:
+    ocs2::CentroidalModelInfo info_;
+    double velocity_limit_ = 0.0;
+};
+
+class JointPositionBoundsConstraint final : public ocs2::StateInputConstraint {
+   public:
+    JointPositionBoundsConstraint(ocs2::CentroidalModelInfo info,
+                                  ocs2::vector_t lower,
+                                  ocs2::vector_t upper)
+        : ocs2::StateInputConstraint(ocs2::ConstraintOrder::Linear),
+          info_(std::move(info)),
+          lower_(std::move(lower)),
+          upper_(std::move(upper)) {}
+
+    JointPositionBoundsConstraint(const JointPositionBoundsConstraint& other)
+        : ocs2::StateInputConstraint(other),
+          info_(other.info_),
+          lower_(other.lower_),
+          upper_(other.upper_) {}
+
+    JointPositionBoundsConstraint* clone() const override {
+        return new JointPositionBoundsConstraint(*this);
+    }
+
+    bool isActive(ocs2::scalar_t) const override {
+        return lower_.size() == static_cast<int>(info_.actuatedDofNum) &&
+               upper_.size() == static_cast<int>(info_.actuatedDofNum);
+    }
+
+    size_t getNumConstraints(ocs2::scalar_t) const override {
+        return 2 * info_.actuatedDofNum;
+    }
+
+    ocs2::vector_t getValue(ocs2::scalar_t,
+                            const ocs2::vector_t& state,
+                            const ocs2::vector_t& input,
+                            const ocs2::PreComputation&) const override {
+        (void)input;
+        ocs2::vector_t value(2 * info_.actuatedDofNum);
+        const int joint_position_offset = 12;
+        for (size_t i = 0; i < info_.actuatedDofNum; i++) {
+            const int index = joint_position_offset + static_cast<int>(i);
+            const double position = state[index];
+            value[2 * static_cast<int>(i)] = position - lower_[i];
+            value[2 * static_cast<int>(i) + 1] = upper_[i] - position;
+        }
+        return value;
+    }
+
+    ocs2::VectorFunctionLinearApproximation getLinearApproximation(
+        ocs2::scalar_t time,
+        const ocs2::vector_t& state,
+        const ocs2::vector_t& input,
+        const ocs2::PreComputation& pre_computation) const override {
+        ocs2::VectorFunctionLinearApproximation approximation;
+        approximation.f = getValue(time, state, input, pre_computation);
+        approximation.dfdx =
+            ocs2::matrix_t::Zero(getNumConstraints(time), state.size());
+        approximation.dfdu =
+            ocs2::matrix_t::Zero(getNumConstraints(time), input.size());
+        const int joint_position_offset = 12;
+        for (size_t i = 0; i < info_.actuatedDofNum; i++) {
+            const int row = 2 * static_cast<int>(i);
+            const int col = joint_position_offset + static_cast<int>(i);
+            approximation.dfdx(row, col) = 1.0;
+            approximation.dfdx(row + 1, col) = -1.0;
+        }
+        return approximation;
+    }
+
+   private:
+    ocs2::CentroidalModelInfo info_;
+    ocs2::vector_t lower_;
+    ocs2::vector_t upper_;
+};
+
 class ContactFrictionConeConstraint final : public ocs2::StateInputConstraint {
    public:
     ContactFrictionConeConstraint(
@@ -484,6 +835,27 @@ class ContactFrictionConeConstraint final : public ocs2::StateInputConstraint {
 
 }  // namespace
 
+struct Ocs2CentroidalMpc::SolveRequest {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    CentroidalMpcInput input;
+    ocs2::vector_t state;
+    ocs2::ModeSchedule mode_schedule;
+    ocs2::TargetTrajectories target_trajectories;
+    double time = 0.0;
+    uint64_t sequence = 0;
+};
+
+struct Ocs2CentroidalMpc::PolicySnapshot {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    ocs2::PrimalSolution solution;
+    double time = 0.0;
+    uint64_t sequence = 0;
+    int iterations = 0;
+    double objective = 0.0;
+};
+
 Ocs2CentroidalMpc::Ocs2CentroidalMpc(CentroidalMpcConfig config)
     : config_(std::move(config)) {
     Ocs2CentroidalModelConfig model_config;
@@ -504,20 +876,57 @@ Ocs2CentroidalMpc::Ocs2CentroidalMpc(CentroidalMpcConfig config)
         nominal_joint_position_ =
             ocs2::vector_t::Zero(model_->info().actuatedDofNum);
     }
+    if (!config_.joint_position_limits.empty()) {
+        if (config_.joint_position_limits.size() !=
+            2 * config_.joint_order.size()) {
+            throw std::runtime_error(
+                "OCS2 centroidal joint_position_limits size mismatch");
+        }
+        Eigen::VectorXd configured_lower(config_.joint_order.size());
+        Eigen::VectorXd configured_upper(config_.joint_order.size());
+        for (size_t i = 0; i < config_.joint_order.size(); i++) {
+            configured_lower[static_cast<int>(i)] =
+                config_.joint_position_limits[2 * i];
+            configured_upper[static_cast<int>(i)] =
+                config_.joint_position_limits[2 * i + 1];
+        }
+        joint_position_lower_ =
+            model_->model_order_joint_vector(configured_lower);
+        joint_position_upper_ =
+            model_->model_order_joint_vector(configured_upper);
+    }
     last_input_ = ocs2::vector_t::Zero(model_->info().inputDim);
     configure_solver();
+    if (config_.mrt_enabled) {
+        start_mrt_worker();
+    }
 }
 
-Ocs2CentroidalMpc::~Ocs2CentroidalMpc() = default;
+Ocs2CentroidalMpc::~Ocs2CentroidalMpc() {
+    stop_mrt_worker();
+}
 
 void Ocs2CentroidalMpc::reset() {
+    const bool restart_mrt = config_.mrt_enabled && mrt_worker_running_;
+    if (restart_mrt) {
+        stop_mrt_worker();
+    }
     time_ = 0.0;
     has_last_input_ = false;
+    mrt_next_sequence_ = 1;
     if (last_input_.size() == static_cast<int>(model_->info().inputDim)) {
         last_input_.setZero();
     }
+    {
+        std::lock_guard<std::mutex> lock(mrt_policy_mutex_);
+        mrt_policy_.reset();
+    }
     if (mpc_) {
+        std::lock_guard<std::mutex> lock(solver_mutex_);
         mpc_->reset();
+    }
+    if (restart_mrt) {
+        start_mrt_worker();
     }
 }
 
@@ -754,6 +1163,18 @@ void Ocs2CentroidalMpc::fill_output(
     output.desired_left_contact_force = left_force;
     output.desired_right_contact_force = right_force;
     output.has_desired_contact_forces = true;
+    const int joint_velocity_offset = 3 * info.numThreeDofContacts +
+                                      6 * info.numSixDofContacts;
+    const Eigen::VectorXd model_joint_velocity =
+        control.segment(joint_velocity_offset, info.actuatedDofNum);
+    output.desired_joint_velocity =
+        model_->configured_order_joint_vector(model_joint_velocity);
+    if (output.desired_joint_velocity.size() == input.joint_position.size()) {
+        output.desired_joint_position =
+            input.joint_position +
+            config_.control_dt * output.desired_joint_velocity;
+        output.has_desired_joint_command = true;
+    }
     output.desired_com_acceleration.setZero();
     if (input.mass > 0.0) {
         output.desired_com_acceleration.x() = net_contact_force.x() / input.mass;
@@ -790,8 +1211,15 @@ void Ocs2CentroidalMpc::configure_solver() {
         ocs2::vector_array_t{ocs2::vector_t::Zero(info.stateDim)},
         ocs2::vector_array_t{make_weight_compensating_input(
             info, ContactFlags{true, true})});
-    reference_manager_ = std::make_shared<ocs2::ReferenceManager>(
-        initial_target, initial_mode_schedule);
+    SwingTrajectoryConfig swing_config;
+    swing_config.lift_off_velocity = config_.swing_lift_off_velocity;
+    swing_config.touch_down_velocity = config_.swing_touch_down_velocity;
+    swing_config.swing_height = config_.swing_height;
+    swing_config.swing_time_scale = config_.swing_time_scale;
+    switched_reference_manager_ =
+        std::make_shared<SwitchedModelReferenceManager>(
+            initial_target, initial_mode_schedule, swing_config);
+    reference_manager_ = switched_reference_manager_;
 
     problem_.dynamicsPtr =
         std::make_unique<PinocchioCentroidalSystemDynamics>(
@@ -832,6 +1260,21 @@ void Ocs2CentroidalMpc::configure_solver() {
                 std::make_unique<ContactForceDeviationBoundsConstraint>(
                     reference_manager_, info, config_));
         }
+        if (config_.joint_velocity_limit > 0.0) {
+            problem_.inequalityConstraintPtr->add(
+                "joint_velocity_bounds",
+                std::make_unique<JointVelocityBoundsConstraint>(
+                    info, config_.joint_velocity_limit));
+        }
+        if (joint_position_lower_.size() ==
+                static_cast<int>(info.actuatedDofNum) &&
+            joint_position_upper_.size() ==
+                static_cast<int>(info.actuatedDofNum)) {
+            problem_.inequalityConstraintPtr->add(
+                "joint_position_bounds",
+                std::make_unique<JointPositionBoundsConstraint>(
+                    info, joint_position_lower_, joint_position_upper_));
+        }
         if (config_.friction_cone_constraint_enabled &&
             config_.friction_coefficient > 0.0) {
             const ocs2::RelaxedBarrierPenalty::Config barrier_config(
@@ -850,6 +1293,61 @@ void Ocs2CentroidalMpc::configure_solver() {
                         reference_manager_, info, config_, kRightContactIndex),
                     std::make_unique<ocs2::RelaxedBarrierPenalty>(
                         barrier_config)));
+        }
+        if (switched_reference_manager_ &&
+            (config_.stance_zero_velocity_constraint_enabled ||
+             config_.swing_normal_velocity_constraint_enabled ||
+             (config_.swing_position_constraint_enabled &&
+              config_.swing_position_weight > 0.0))) {
+            auto left_kinematics = make_foot_kinematics(
+                *model_, info, config_, config_.left_foot_frame,
+                "roboparty_left_foot_kinematics");
+            auto right_kinematics = make_foot_kinematics(
+                *model_, info, config_, config_.right_foot_frame,
+                "roboparty_right_foot_kinematics");
+            if (config_.stance_zero_velocity_constraint_enabled) {
+                problem_.equalityConstraintPtr->add(
+                    "left_stance_zero_velocity",
+                    std::make_unique<FootZeroVelocityConstraint>(
+                        switched_reference_manager_, *left_kinematics,
+                        kLeftContactIndex));
+                problem_.equalityConstraintPtr->add(
+                    "right_stance_zero_velocity",
+                    std::make_unique<FootZeroVelocityConstraint>(
+                        switched_reference_manager_, *right_kinematics,
+                        kRightContactIndex));
+            }
+            if (config_.swing_normal_velocity_constraint_enabled) {
+                problem_.equalityConstraintPtr->add(
+                    "left_swing_normal_velocity",
+                    std::make_unique<SwingFootNormalVelocityConstraint>(
+                        switched_reference_manager_, *left_kinematics,
+                        kLeftContactIndex));
+                problem_.equalityConstraintPtr->add(
+                    "right_swing_normal_velocity",
+                    std::make_unique<SwingFootNormalVelocityConstraint>(
+                        switched_reference_manager_, *right_kinematics,
+                        kRightContactIndex));
+            }
+            if (config_.swing_position_constraint_enabled &&
+                config_.swing_position_weight > 0.0) {
+                problem_.softConstraintPtr->add(
+                    "left_swing_position",
+                    std::make_unique<ocs2::StateInputSoftConstraint>(
+                        std::make_unique<SwingFootPositionConstraint>(
+                            switched_reference_manager_, *left_kinematics,
+                            kLeftContactIndex),
+                        std::make_unique<ocs2::QuadraticPenalty>(
+                            config_.swing_position_weight)));
+                problem_.softConstraintPtr->add(
+                    "right_swing_position",
+                    std::make_unique<ocs2::StateInputSoftConstraint>(
+                        std::make_unique<SwingFootPositionConstraint>(
+                            switched_reference_manager_, *right_kinematics,
+                            kRightContactIndex),
+                        std::make_unique<ocs2::QuadraticPenalty>(
+                            config_.swing_position_weight)));
+            }
         }
     }
     problem_.targetTrajectoriesPtr =
@@ -887,9 +1385,181 @@ void Ocs2CentroidalMpc::configure_solver() {
     mpc_->getSolverPtr()->setReferenceManager(reference_manager_);
 }
 
+Ocs2CentroidalMpc::SolveRequest Ocs2CentroidalMpc::make_solve_request(
+    const CentroidalMpcInput& input,
+    const ocs2::vector_t& state,
+    double time) const {
+    const ContactFlags current_flags{input.left_contact, input.right_contact};
+    SolveRequest request;
+    request.input = input;
+    request.state = state;
+    request.time = time;
+    request.mode_schedule = to_ocs2_mode_schedule(
+        input.contact_schedule, time, current_flags);
+    request.target_trajectories =
+        make_target_trajectories(input, time, state);
+    return request;
+}
+
+bool Ocs2CentroidalMpc::run_solver_iteration(const SolveRequest& request,
+                                             PolicySnapshot& policy) {
+    if (!mpc_) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(solver_mutex_);
+    try {
+        const ContactFlags current_flags{request.input.left_contact,
+                                         request.input.right_contact};
+        if (switched_reference_manager_) {
+            switched_reference_manager_->set_reference_input(
+                request.input.contact_schedule, request.time, current_flags,
+                request.input.left_foot_position,
+                request.input.right_foot_position);
+        }
+        reference_manager_->setModeSchedule(request.mode_schedule);
+        reference_manager_->setTargetTrajectories(request.target_trajectories);
+
+        const bool updated = mpc_->run(request.time, request.state);
+        if (!updated) {
+            return false;
+        }
+        policy.solution = mpc_->getSolverPtr()->primalSolution(
+            mpc_->getSolverPtr()->getFinalTime());
+        policy.time = request.time;
+        policy.sequence = request.sequence;
+        policy.iterations =
+            static_cast<int>(mpc_->getSolverPtr()->getNumIterations());
+        policy.objective =
+            mpc_->getSolverPtr()->getPerformanceIndeces().cost;
+        return true;
+    } catch (const std::exception&) {
+        mpc_->reset();
+        return false;
+    }
+}
+
+bool Ocs2CentroidalMpc::compute_control_from_policy(
+    const ocs2::PrimalSolution& solution,
+    double time,
+    const ocs2::vector_t& state,
+    ocs2::vector_t& control) const {
+    if (solution.controllerPtr_ && !solution.controllerPtr_->empty()) {
+        control = solution.controllerPtr_->computeInput(time, state);
+        return true;
+    }
+    if (!solution.inputTrajectory_.empty()) {
+        control = solution.inputTrajectory_.front();
+        return true;
+    }
+    return false;
+}
+
+bool Ocs2CentroidalMpc::try_get_policy_snapshot(
+    double time,
+    PolicySnapshot& policy) const {
+    std::lock_guard<std::mutex> lock(mrt_policy_mutex_);
+    if (!mrt_policy_) {
+        return false;
+    }
+    if (config_.mrt_max_policy_age > 0.0 &&
+        time - mrt_policy_->time > config_.mrt_max_policy_age) {
+        return false;
+    }
+    if (mrt_policy_->solution.timeTrajectory_.empty()) {
+        return false;
+    }
+    if (time >
+        mrt_policy_->solution.timeTrajectory_.back() + config_.control_dt) {
+        return false;
+    }
+    policy = *mrt_policy_;
+    return true;
+}
+
+void Ocs2CentroidalMpc::publish_policy_snapshot(PolicySnapshot policy) {
+    std::lock_guard<std::mutex> lock(mrt_policy_mutex_);
+    if (!mrt_policy_ || policy.sequence >= mrt_policy_->sequence) {
+        mrt_policy_ = std::make_unique<PolicySnapshot>(std::move(policy));
+    }
+}
+
+void Ocs2CentroidalMpc::start_mrt_worker() {
+    if (!config_.mrt_enabled || mrt_worker_.joinable()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mrt_request_mutex_);
+        mrt_stop_requested_ = false;
+        mrt_request_pending_ = false;
+        mrt_worker_running_ = true;
+        mrt_pending_request_.reset();
+    }
+    mrt_worker_ = std::thread(&Ocs2CentroidalMpc::mrt_worker_loop, this);
+}
+
+void Ocs2CentroidalMpc::stop_mrt_worker() {
+    {
+        std::lock_guard<std::mutex> lock(mrt_request_mutex_);
+        mrt_stop_requested_ = true;
+        mrt_request_pending_ = false;
+        mrt_pending_request_.reset();
+    }
+    mrt_request_cv_.notify_all();
+    if (mrt_worker_.joinable()) {
+        mrt_worker_.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(mrt_request_mutex_);
+        mrt_worker_running_ = false;
+        mrt_stop_requested_ = false;
+    }
+}
+
+void Ocs2CentroidalMpc::enqueue_mrt_request(SolveRequest request) {
+    if (!config_.mrt_enabled) {
+        return;
+    }
+    request.sequence = mrt_next_sequence_++;
+    {
+        std::lock_guard<std::mutex> lock(mrt_request_mutex_);
+        if (!mrt_worker_running_) {
+            return;
+        }
+        mrt_pending_request_ =
+            std::make_unique<SolveRequest>(std::move(request));
+        mrt_request_pending_ = true;
+    }
+    mrt_request_cv_.notify_one();
+}
+
+void Ocs2CentroidalMpc::mrt_worker_loop() {
+    while (true) {
+        std::unique_ptr<SolveRequest> request;
+        {
+            std::unique_lock<std::mutex> lock(mrt_request_mutex_);
+            mrt_request_cv_.wait(lock, [&]() {
+                return mrt_stop_requested_ || mrt_request_pending_;
+            });
+            if (mrt_stop_requested_) {
+                return;
+            }
+            request = std::move(mrt_pending_request_);
+            mrt_request_pending_ = false;
+        }
+        if (!request) {
+            continue;
+        }
+        PolicySnapshot policy;
+        if (run_solver_iteration(*request, policy)) {
+            publish_policy_snapshot(std::move(policy));
+        }
+    }
+}
+
 CentroidalMpcOutput Ocs2CentroidalMpc::solve(
     const CentroidalMpcInput& input) {
     const ocs2::vector_t state = make_state(input);
+    SolveRequest request = make_solve_request(input, state, time_);
 
     CentroidalMpcOutput output;
     output.backend = name_;
@@ -906,29 +1576,9 @@ CentroidalMpcOutput Ocs2CentroidalMpc::solve(
         return output;
     }
 
-    const ContactFlags current_flags{input.left_contact, input.right_contact};
-    reference_manager_->setModeSchedule(to_ocs2_mode_schedule(
-        input.contact_schedule, time_, current_flags));
-    reference_manager_->setTargetTrajectories(
-        make_target_trajectories(input, time_, state));
-
-    try {
-        const bool updated = mpc_->run(time_, state);
-        if (!updated) {
-            return output;
-        }
-
-        const ocs2::PrimalSolution solution =
-            mpc_->getSolverPtr()->primalSolution(
-                mpc_->getSolverPtr()->getFinalTime());
-        ocs2::vector_t control;
-        if (solution.controllerPtr_ && !solution.controllerPtr_->empty()) {
-            control = solution.controllerPtr_->computeInput(time_, state);
-        } else if (!solution.inputTrajectory_.empty()) {
-            control = solution.inputTrajectory_.front();
-        } else {
-            return output;
-        }
+    const auto apply_control =
+        [&](const ocs2::vector_t& control, int iterations,
+            double objective) {
         if (control.size() != static_cast<int>(model_->info().inputDim)) {
             throw std::runtime_error(
                 "OCS2 full centroidal MPC returned invalid input size");
@@ -950,14 +1600,53 @@ CentroidalMpcOutput Ocs2CentroidalMpc::solve(
                               input.right_contact);
         }
 
-        const double objective =
-            mpc_->getSolverPtr()->getPerformanceIndeces().cost;
         fill_output(bounded_control, state, input,
-                    static_cast<int>(mpc_->getSolverPtr()->getNumIterations()),
-                    objective, output);
+                    iterations, objective, output);
         last_input_ = bounded_control;
+    };
+
+    try {
+        if (config_.mrt_enabled) {
+            start_mrt_worker();
+            PolicySnapshot policy;
+            bool has_policy = try_get_policy_snapshot(time_, policy);
+            if (!has_policy && config_.mrt_first_solve_blocking) {
+                request.sequence = mrt_next_sequence_++;
+                has_policy = run_solver_iteration(request, policy);
+                if (has_policy) {
+                    publish_policy_snapshot(policy);
+                }
+            } else {
+                enqueue_mrt_request(request);
+            }
+
+            if (has_policy) {
+                ocs2::vector_t control;
+                if (compute_control_from_policy(
+                        policy.solution, time_, state, control)) {
+                    apply_control(control, policy.iterations,
+                                  policy.objective);
+                }
+            }
+        } else {
+            request.sequence = mrt_next_sequence_++;
+            PolicySnapshot policy;
+            if (run_solver_iteration(request, policy)) {
+                ocs2::vector_t control;
+                if (compute_control_from_policy(
+                        policy.solution, time_, state, control)) {
+                    apply_control(control, policy.iterations,
+                                  policy.objective);
+                }
+            }
+        }
     } catch (const std::exception&) {
-        mpc_->reset();
+        if (!config_.mrt_enabled) {
+            std::lock_guard<std::mutex> lock(solver_mutex_);
+            if (mpc_) {
+                mpc_->reset();
+            }
+        }
         has_last_input_ = false;
         last_input_ = nominal_input(input.left_contact, input.right_contact);
     }
@@ -966,6 +1655,7 @@ CentroidalMpcOutput Ocs2CentroidalMpc::solve(
     if (!std::isfinite(time_) || time_ > 3600.0) {
         time_ = 0.0;
         if (mpc_) {
+            std::lock_guard<std::mutex> lock(solver_mutex_);
             mpc_->reset();
         }
     }

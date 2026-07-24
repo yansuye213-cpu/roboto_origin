@@ -43,6 +43,9 @@ void InferenceNode::load_config() {
     this->declare_parameter<bool>("stand_validate_whole_body_model", false);
     this->declare_parameter<bool>("stand_wbc_mpc_enabled", true);
     this->declare_parameter<std::string>("stand_wbc_mpc_backend", "ocs2");
+    this->declare_parameter<bool>("stand_wbc_mpc_mrt_enabled", false);
+    this->declare_parameter<bool>("stand_wbc_mpc_mrt_first_solve_blocking", true);
+    this->declare_parameter<float>("stand_wbc_mpc_mrt_max_policy_age", 0.08);
     this->declare_parameter<int>("stand_wbc_mpc_horizon", 20);
     this->declare_parameter<float>("stand_wbc_mpc_dt", 0.012);
     this->declare_parameter<float>("stand_wbc_target_roll", 0.0);
@@ -63,6 +66,9 @@ void InferenceNode::load_config() {
     this->declare_parameter<bool>("stand_wbc_mpc_normal_force_constraint_enabled", true);
     this->declare_parameter<bool>("stand_wbc_mpc_delta_force_constraint_enabled", true);
     this->declare_parameter<bool>("stand_wbc_mpc_friction_cone_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_stance_zero_velocity_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_swing_normal_velocity_constraint_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_swing_position_constraint_enabled", true);
     this->declare_parameter<float>("stand_wbc_mpc_friction_barrier_mu", 0.1);
     this->declare_parameter<float>("stand_wbc_mpc_friction_barrier_delta", 5.0);
     this->declare_parameter<float>("stand_wbc_mpc_friction_regularization", 25.0);
@@ -73,6 +79,13 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("stand_wbc_mpc_yaw_weight", 1.0);
     this->declare_parameter<float>("stand_wbc_mpc_joint_angle_weight", 0.5);
     this->declare_parameter<float>("stand_wbc_mpc_joint_velocity_weight", 0.02);
+    this->declare_parameter<float>("stand_wbc_mpc_swing_position_weight", 10.0);
+    this->declare_parameter<bool>("stand_wbc_mpc_joint_command_enabled", false);
+    this->declare_parameter<float>("stand_wbc_mpc_joint_command_position_gain", 0.25);
+    this->declare_parameter<float>("stand_wbc_mpc_joint_command_velocity_scale", 1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_swing_time_scale", 0.15);
+    this->declare_parameter<float>("stand_wbc_mpc_swing_lift_off_velocity", 0.0);
+    this->declare_parameter<float>("stand_wbc_mpc_swing_touch_down_velocity", 0.0);
     this->declare_parameter<std::string>("stand_wbc_mpc_ad_model_folder", "/tmp/roboparty_ocs2");
     this->declare_parameter<bool>("stand_wbc_mpc_ad_recompile", false);
     this->declare_parameter<bool>("stand_wbc_mpc_ad_verbose", false);
@@ -81,6 +94,7 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("stand_wbc_state_max_base_linear_velocity", 0.8);
     this->declare_parameter<bool>("stand_wbc_contact_force_qp_enabled", true);
     this->declare_parameter<bool>("stand_wbc_whole_body_qp_enabled", true);
+    this->declare_parameter<std::string>("stand_wbc_solver", "weighted");
     this->declare_parameter<bool>("stand_wbc_floating_base_eom_enabled", true);
     this->declare_parameter<bool>("stand_wbc_stance_contact_constraint_enabled", true);
     this->declare_parameter<bool>("stand_wbc_friction_constraint_enabled", true);
@@ -206,6 +220,9 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_validate_whole_body_model", stand_stabilizer_config_.validate_whole_body_model);
     this->get_parameter("stand_wbc_mpc_enabled", stand_stabilizer_config_.wbc_mpc_enabled);
     this->get_parameter("stand_wbc_mpc_backend", stand_stabilizer_config_.wbc_mpc_backend);
+    this->get_parameter("stand_wbc_mpc_mrt_enabled", stand_stabilizer_config_.wbc_mpc_mrt_enabled);
+    this->get_parameter("stand_wbc_mpc_mrt_first_solve_blocking", stand_stabilizer_config_.wbc_mpc_mrt_first_solve_blocking);
+    this->get_parameter("stand_wbc_mpc_mrt_max_policy_age", stand_stabilizer_config_.wbc_mpc_mrt_max_policy_age);
     this->get_parameter("stand_wbc_mpc_horizon", stand_stabilizer_config_.wbc_mpc_horizon);
     this->get_parameter("stand_wbc_mpc_dt", stand_stabilizer_config_.wbc_mpc_dt);
     this->get_parameter("stand_wbc_target_roll", stand_stabilizer_config_.wbc_target_roll);
@@ -226,6 +243,9 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_mpc_normal_force_constraint_enabled", stand_stabilizer_config_.wbc_mpc_normal_force_constraint_enabled);
     this->get_parameter("stand_wbc_mpc_delta_force_constraint_enabled", stand_stabilizer_config_.wbc_mpc_delta_force_constraint_enabled);
     this->get_parameter("stand_wbc_mpc_friction_cone_constraint_enabled", stand_stabilizer_config_.wbc_mpc_friction_cone_constraint_enabled);
+    this->get_parameter("stand_wbc_mpc_stance_zero_velocity_constraint_enabled", stand_stabilizer_config_.wbc_mpc_stance_zero_velocity_constraint_enabled);
+    this->get_parameter("stand_wbc_mpc_swing_normal_velocity_constraint_enabled", stand_stabilizer_config_.wbc_mpc_swing_normal_velocity_constraint_enabled);
+    this->get_parameter("stand_wbc_mpc_swing_position_constraint_enabled", stand_stabilizer_config_.wbc_mpc_swing_position_constraint_enabled);
     this->get_parameter("stand_wbc_mpc_friction_barrier_mu", stand_stabilizer_config_.wbc_mpc_friction_barrier_mu);
     this->get_parameter("stand_wbc_mpc_friction_barrier_delta", stand_stabilizer_config_.wbc_mpc_friction_barrier_delta);
     this->get_parameter("stand_wbc_mpc_friction_regularization", stand_stabilizer_config_.wbc_mpc_friction_regularization);
@@ -236,6 +256,13 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_mpc_yaw_weight", stand_stabilizer_config_.wbc_mpc_yaw_weight);
     this->get_parameter("stand_wbc_mpc_joint_angle_weight", stand_stabilizer_config_.wbc_mpc_joint_angle_weight);
     this->get_parameter("stand_wbc_mpc_joint_velocity_weight", stand_stabilizer_config_.wbc_mpc_joint_velocity_weight);
+    this->get_parameter("stand_wbc_mpc_swing_position_weight", stand_stabilizer_config_.wbc_mpc_swing_position_weight);
+    this->get_parameter("stand_wbc_mpc_joint_command_enabled", stand_stabilizer_config_.wbc_mpc_joint_command_enabled);
+    this->get_parameter("stand_wbc_mpc_joint_command_position_gain", stand_stabilizer_config_.wbc_mpc_joint_command_position_gain);
+    this->get_parameter("stand_wbc_mpc_joint_command_velocity_scale", stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale);
+    this->get_parameter("stand_wbc_mpc_swing_time_scale", stand_stabilizer_config_.wbc_mpc_swing_time_scale);
+    this->get_parameter("stand_wbc_mpc_swing_lift_off_velocity", stand_stabilizer_config_.wbc_mpc_swing_lift_off_velocity);
+    this->get_parameter("stand_wbc_mpc_swing_touch_down_velocity", stand_stabilizer_config_.wbc_mpc_swing_touch_down_velocity);
     this->get_parameter("stand_wbc_mpc_ad_model_folder", stand_stabilizer_config_.wbc_mpc_ad_model_folder);
     this->get_parameter("stand_wbc_mpc_ad_recompile", stand_stabilizer_config_.wbc_mpc_ad_recompile);
     this->get_parameter("stand_wbc_mpc_ad_verbose", stand_stabilizer_config_.wbc_mpc_ad_verbose);
@@ -244,6 +271,7 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_state_max_base_linear_velocity", stand_stabilizer_config_.wbc_state_max_base_linear_velocity);
     this->get_parameter("stand_wbc_contact_force_qp_enabled", stand_stabilizer_config_.wbc_contact_force_qp_enabled);
     this->get_parameter("stand_wbc_whole_body_qp_enabled", stand_stabilizer_config_.wbc_whole_body_qp_enabled);
+    this->get_parameter("stand_wbc_solver", stand_stabilizer_config_.wbc_solver);
     this->get_parameter("stand_wbc_floating_base_eom_enabled", stand_stabilizer_config_.wbc_floating_base_eom_enabled);
     this->get_parameter("stand_wbc_stance_contact_constraint_enabled", stand_stabilizer_config_.wbc_stance_contact_constraint_enabled);
     this->get_parameter("stand_wbc_friction_constraint_enabled", stand_stabilizer_config_.wbc_friction_constraint_enabled);
@@ -360,6 +388,7 @@ void InferenceNode::load_config() {
     if (stand_stabilizer_config_.wbc_mpc_horizon <= 0 ||
         stand_stabilizer_config_.wbc_mpc_dt <= 0.0f ||
         !is_supported_wbc_mpc_backend(stand_stabilizer_config_.wbc_mpc_backend) ||
+        stand_stabilizer_config_.wbc_mpc_mrt_max_policy_age < 0.0f ||
         stand_stabilizer_config_.wbc_mpc_orientation_weight < 0.0f ||
         stand_stabilizer_config_.wbc_mpc_angular_rate_weight < 0.0f ||
         stand_stabilizer_config_.wbc_mpc_com_weight < 0.0f ||
@@ -388,6 +417,10 @@ void InferenceNode::load_config() {
     }
     if (stand_stabilizer_config_.wbc_qp_iterations <= 0) {
         throw std::runtime_error("stand_wbc_qp_iterations must be positive");
+    }
+    if (stand_stabilizer_config_.wbc_solver != "weighted" &&
+        stand_stabilizer_config_.wbc_solver != "hierarchical") {
+        throw std::runtime_error("stand_wbc_solver must be weighted or hierarchical");
     }
     if (stand_stabilizer_config_.wbc_active_set_iterations <= 0) {
         throw std::runtime_error("stand_wbc_active_set_iterations must be positive");
@@ -628,12 +661,15 @@ void InferenceNode::load_config() {
                 stand_stabilizer_config_.wbc_mpc_input_smoothing_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_contact_schedule_enabled ? "true" : "false");
     RCLCPP_INFO(this->get_logger(),
-                "stand_wbc_mpc_solver_constraints: enabled=%s zero_swing_force=%s normal_force=%s delta_force=%s friction_cone=%s barrier=[%f, %f] friction_regularization=%f",
+                "stand_wbc_mpc_solver_constraints: enabled=%s zero_swing_force=%s normal_force=%s delta_force=%s friction_cone=%s stance_zero_velocity=%s swing_normal_velocity=%s swing_position=%s barrier=[%f, %f] friction_regularization=%f",
                 stand_stabilizer_config_.wbc_mpc_solver_constraints_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_zero_swing_force_constraint_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_normal_force_constraint_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_delta_force_constraint_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_friction_cone_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_stance_zero_velocity_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_swing_normal_velocity_constraint_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_swing_position_constraint_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_friction_barrier_mu,
                 stand_stabilizer_config_.wbc_mpc_friction_barrier_delta,
                 stand_stabilizer_config_.wbc_mpc_friction_regularization);
@@ -641,11 +677,16 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_com_accel: %f", stand_stabilizer_config_.wbc_mpc_max_com_accel);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_contact_force_delta: %f", stand_stabilizer_config_.wbc_mpc_max_contact_force_delta);
     RCLCPP_INFO(this->get_logger(),
-                "stand_wbc_mpc_full_centroidal_weights: base_height=%f yaw=%f joint_angle=%f joint_velocity=%f",
+                "stand_wbc_mpc_full_centroidal_weights: base_height=%f yaw=%f joint_angle=%f joint_velocity=%f swing_position=%f swing_time_scale=%f joint_cmd=%s pos_gain=%f vel_scale=%f",
                 stand_stabilizer_config_.wbc_mpc_base_height_weight,
                 stand_stabilizer_config_.wbc_mpc_yaw_weight,
                 stand_stabilizer_config_.wbc_mpc_joint_angle_weight,
-                stand_stabilizer_config_.wbc_mpc_joint_velocity_weight);
+                stand_stabilizer_config_.wbc_mpc_joint_velocity_weight,
+                stand_stabilizer_config_.wbc_mpc_swing_position_weight,
+                stand_stabilizer_config_.wbc_mpc_swing_time_scale,
+                stand_stabilizer_config_.wbc_mpc_joint_command_enabled ? "true" : "false",
+                stand_stabilizer_config_.wbc_mpc_joint_command_position_gain,
+                stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale);
     RCLCPP_INFO(this->get_logger(),
                 "stand_wbc_mpc_ad: folder=%s recompile=%s verbose=%s",
                 stand_stabilizer_config_.wbc_mpc_ad_model_folder.c_str(),

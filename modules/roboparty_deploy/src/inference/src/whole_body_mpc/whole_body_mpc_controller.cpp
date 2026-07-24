@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <Eigen/QR>
 #include <iomanip>
 #include <filesystem>
 #include <sstream>
@@ -112,124 +111,6 @@ Eigen::Matrix<double, 6, 1> contact_wrench(
     return wrench;
 }
 
-struct LinearQpResult {
-    Eigen::VectorXd x;
-    int active_constraint_count = 0;
-    double max_violation = 0.0;
-};
-
-bool contains_active_constraint(const std::vector<int>& active, int index) {
-    return std::find(active.begin(), active.end(), index) != active.end();
-}
-
-LinearQpResult solve_active_set_qp(
-    const Eigen::MatrixXd& hessian,
-    const Eigen::VectorXd& linear_rhs,
-    const Eigen::MatrixXd& equality,
-    const Eigen::VectorXd& equality_rhs,
-    const Eigen::MatrixXd& inequality,
-    const Eigen::VectorXd& inequality_rhs,
-    int max_iterations) {
-    constexpr double kPrimalTolerance = 1.0e-5;
-    constexpr double kDualTolerance = 1.0e-6;
-
-    const int decision_dim = static_cast<int>(hessian.rows());
-    const int equality_rows = static_cast<int>(equality.rows());
-    std::vector<int> active;
-    Eigen::VectorXd x = Eigen::VectorXd::Zero(decision_dim);
-    Eigen::VectorXd active_lambda;
-    double max_violation = 0.0;
-
-    const auto solve_with_active_set = [&]() {
-        const int active_rows = static_cast<int>(active.size());
-        const int constraint_rows = equality_rows + active_rows;
-        Eigen::MatrixXd kkt(decision_dim + constraint_rows,
-                            decision_dim + constraint_rows);
-        Eigen::VectorXd rhs(decision_dim + constraint_rows);
-        kkt.setZero();
-        rhs.setZero();
-        kkt.block(0, 0, decision_dim, decision_dim) = hessian;
-        rhs.head(decision_dim) = linear_rhs;
-        if (equality_rows > 0) {
-            kkt.block(0, decision_dim, decision_dim, equality_rows) =
-                equality.transpose();
-            kkt.block(decision_dim, 0, equality_rows, decision_dim) = equality;
-            rhs.segment(decision_dim, equality_rows) = equality_rhs;
-        }
-        for (int i = 0; i < active_rows; i++) {
-            const int constraint_index = active[i];
-            kkt.block(0, decision_dim + equality_rows + i, decision_dim, 1) =
-                inequality.row(constraint_index).transpose();
-            kkt.block(decision_dim + equality_rows + i, 0, 1, decision_dim) =
-                inequality.row(constraint_index);
-            rhs[decision_dim + equality_rows + i] =
-                inequality_rhs[constraint_index];
-        }
-
-        const Eigen::VectorXd solution =
-            kkt.completeOrthogonalDecomposition().solve(rhs);
-        x = solution.head(decision_dim);
-        if (active_rows > 0) {
-            active_lambda = solution.segment(decision_dim + equality_rows, active_rows);
-        } else {
-            active_lambda.resize(0);
-        }
-    };
-
-    const int iteration_limit = std::max(max_iterations, 1);
-    for (int iter = 0; iter < iteration_limit; iter++) {
-        solve_with_active_set();
-        max_violation = 0.0;
-        int most_violated = -1;
-        if (inequality.rows() > 0) {
-            const Eigen::VectorXd violation = inequality * x - inequality_rhs;
-            for (int i = 0; i < violation.size(); i++) {
-                if (contains_active_constraint(active, i)) {
-                    continue;
-                }
-                if (violation[i] > max_violation) {
-                    max_violation = violation[i];
-                    most_violated = i;
-                }
-            }
-        }
-        if (most_violated >= 0 && max_violation > kPrimalTolerance) {
-            active.push_back(most_violated);
-            continue;
-        }
-
-        int most_negative_lambda = -1;
-        double min_lambda = 0.0;
-        for (int i = 0; i < active_lambda.size(); i++) {
-            if (active_lambda[i] < min_lambda) {
-                min_lambda = active_lambda[i];
-                most_negative_lambda = i;
-            }
-        }
-        if (most_negative_lambda >= 0 && min_lambda < -kDualTolerance) {
-            active.erase(active.begin() + most_negative_lambda);
-            continue;
-        }
-
-        LinearQpResult result;
-        result.x = x;
-        result.active_constraint_count = static_cast<int>(active.size());
-        result.max_violation = std::max(max_violation, 0.0);
-        return result;
-    }
-
-    solve_with_active_set();
-    if (inequality.rows() > 0) {
-        const Eigen::VectorXd violation = inequality * x - inequality_rhs;
-        max_violation = std::max(0.0, violation.maxCoeff());
-    }
-    LinearQpResult result;
-    result.x = x;
-    result.active_constraint_count = static_cast<int>(active.size());
-    result.max_violation = max_violation;
-    return result;
-}
-
 }  // namespace
 
 WholeBodyMpcController::WholeBodyMpcController(const StandingStabilizer::Config& config)
@@ -270,6 +151,10 @@ WholeBodyMpcController::WholeBodyMpcController(const StandingStabilizer::Config&
     CentroidalMpc::Config mpc_config;
     mpc_config.enabled = config_.wbc_mpc_enabled;
     mpc_config.backend = config_.wbc_mpc_backend;
+    mpc_config.mrt_enabled = config_.wbc_mpc_mrt_enabled;
+    mpc_config.mrt_first_solve_blocking =
+        config_.wbc_mpc_mrt_first_solve_blocking;
+    mpc_config.mrt_max_policy_age = config_.wbc_mpc_mrt_max_policy_age;
     mpc_config.horizon = config_.wbc_mpc_horizon;
     mpc_config.dt = config_.wbc_mpc_dt;
     mpc_config.control_dt = config_.dt;
@@ -294,6 +179,12 @@ WholeBodyMpcController::WholeBodyMpcController(const StandingStabilizer::Config&
         config_.wbc_mpc_delta_force_constraint_enabled;
     mpc_config.friction_cone_constraint_enabled =
         config_.wbc_mpc_friction_cone_constraint_enabled;
+    mpc_config.stance_zero_velocity_constraint_enabled =
+        config_.wbc_mpc_stance_zero_velocity_constraint_enabled;
+    mpc_config.swing_normal_velocity_constraint_enabled =
+        config_.wbc_mpc_swing_normal_velocity_constraint_enabled;
+    mpc_config.swing_position_constraint_enabled =
+        config_.wbc_mpc_swing_position_constraint_enabled;
     mpc_config.friction_barrier_mu = config_.wbc_mpc_friction_barrier_mu;
     mpc_config.friction_barrier_delta = config_.wbc_mpc_friction_barrier_delta;
     mpc_config.friction_regularization = config_.wbc_mpc_friction_regularization;
@@ -307,6 +198,14 @@ WholeBodyMpcController::WholeBodyMpcController(const StandingStabilizer::Config&
     mpc_config.yaw_weight = config_.wbc_mpc_yaw_weight;
     mpc_config.joint_angle_weight = config_.wbc_mpc_joint_angle_weight;
     mpc_config.joint_velocity_weight = config_.wbc_mpc_joint_velocity_weight;
+    mpc_config.swing_position_weight = config_.wbc_mpc_swing_position_weight;
+    mpc_config.joint_velocity_limit = config_.wbc_swing_max_joint_velocity;
+    mpc_config.swing_height = config_.wbc_step_recovery_swing_height;
+    mpc_config.swing_time_scale = config_.wbc_mpc_swing_time_scale;
+    mpc_config.swing_lift_off_velocity =
+        config_.wbc_mpc_swing_lift_off_velocity;
+    mpc_config.swing_touch_down_velocity =
+        config_.wbc_mpc_swing_touch_down_velocity;
     mpc_config.target_roll = config_.wbc_target_roll;
     mpc_config.target_pitch = config_.wbc_target_pitch;
     mpc_config.model_path = config_.whole_body_model_path;
@@ -314,6 +213,7 @@ WholeBodyMpcController::WholeBodyMpcController(const StandingStabilizer::Config&
     mpc_config.right_foot_frame = config_.whole_body_right_foot_link;
     mpc_config.joint_order = config_.whole_body_joint_order;
     mpc_config.nominal_joint_angles = config_.whole_body_nominal_joint_angles;
+    mpc_config.joint_position_limits = config_.joint_limits;
     mpc_config.ad_model_folder = config_.wbc_mpc_ad_model_folder;
     mpc_config.ad_recompile = config_.wbc_mpc_ad_recompile;
     mpc_config.ad_verbose = config_.wbc_mpc_ad_verbose;
@@ -329,6 +229,50 @@ WholeBodyMpcController::WholeBodyMpcController(const StandingStabilizer::Config&
     qp_config.regularization_weight = config_.wbc_regularization_weight;
     qp_config.smooth_weight = config_.wbc_smooth_weight;
     contact_force_qp_ = std::make_unique<ContactForceQp>(qp_config);
+
+    WholeBodyWbc::Config whole_body_wbc_config;
+    whole_body_wbc_config.joint_num = config_.joint_num;
+    whole_body_wbc_config.solver = config_.wbc_solver;
+    whole_body_wbc_config.enabled = config_.wbc_whole_body_qp_enabled;
+    whole_body_wbc_config.floating_base_eom_enabled =
+        config_.wbc_floating_base_eom_enabled;
+    whole_body_wbc_config.stance_contact_constraint_enabled =
+        config_.wbc_stance_contact_constraint_enabled;
+    whole_body_wbc_config.friction_constraint_enabled =
+        config_.wbc_friction_constraint_enabled;
+    whole_body_wbc_config.torque_limit_constraint_enabled =
+        config_.wbc_torque_limit_constraint_enabled;
+    whole_body_wbc_config.base_accel_task_enabled =
+        config_.wbc_base_accel_task_enabled;
+    whole_body_wbc_config.contact_force_task_enabled =
+        config_.wbc_contact_force_task_enabled;
+    whole_body_wbc_config.swing_task_enabled = config_.wbc_swing_task_enabled;
+    whole_body_wbc_config.qddot_regularization_enabled =
+        config_.wbc_qddot_regularization_enabled;
+    whole_body_wbc_config.tau_regularization_enabled =
+        config_.wbc_tau_regularization_enabled;
+    whole_body_wbc_config.torque_enabled = config_.wbc_torque_enabled;
+    whole_body_wbc_config.active_set_iterations =
+        config_.wbc_active_set_iterations;
+    whole_body_wbc_config.friction_coefficient =
+        config_.wbc_friction_coefficient;
+    whole_body_wbc_config.min_normal_force = config_.wbc_min_normal_force;
+    whole_body_wbc_config.max_normal_force = config_.wbc_max_normal_force;
+    whole_body_wbc_config.force_tracking_weight =
+        config_.wbc_force_tracking_weight;
+    whole_body_wbc_config.moment_tracking_weight =
+        config_.wbc_moment_tracking_weight;
+    whole_body_wbc_config.regularization_weight =
+        config_.wbc_regularization_weight;
+    whole_body_wbc_config.smooth_weight = config_.wbc_smooth_weight;
+    whole_body_wbc_config.swing_tracking_weight =
+        config_.wbc_swing_tracking_weight;
+    whole_body_wbc_config.swing_kp = config_.wbc_swing_kp;
+    whole_body_wbc_config.swing_kd = config_.wbc_swing_kd;
+    whole_body_wbc_config.max_joint_torque = config_.wbc_max_joint_torque;
+    whole_body_wbc_config.torque_joint_scale =
+        config_.wbc_torque_joint_scale;
+    whole_body_wbc_ = create_whole_body_wbc(std::move(whole_body_wbc_config));
 
     RecoveryGaitPlanner::Config gait_config;
     gait_config.enabled = config_.wbc_step_recovery_enabled;
@@ -395,6 +339,9 @@ void WholeBodyMpcController::reset() {
     if (contact_force_qp_) {
         contact_force_qp_->reset();
     }
+    if (whole_body_wbc_) {
+        whole_body_wbc_->reset();
+    }
     if (recovery_gait_planner_) {
         recovery_gait_planner_->reset();
     }
@@ -438,6 +385,12 @@ std::vector<std::string> WholeBodyMpcController::diagnostics() const {
         " control_dt=" + std::to_string(config_.dt) +
         " enabled=" + std::string(config_.wbc_mpc_enabled ? "true" : "false") +
         " backend=" + centroidal_mpc_->backend_name() +
+        " mrt=" +
+        std::string(config_.wbc_mpc_mrt_enabled ? "enabled" : "disabled") +
+        " first_blocking=" +
+        std::string(config_.wbc_mpc_mrt_first_solve_blocking ? "true" : "false") +
+        " max_policy_age=" +
+        std::to_string(config_.wbc_mpc_mrt_max_policy_age) +
         " terminal_cost=" +
         std::string(config_.wbc_mpc_terminal_cost_enabled ? "true" : "false") +
         " input_smoothing=" +
@@ -479,6 +432,12 @@ std::vector<std::string> WholeBodyMpcController::diagnostics() const {
         std::string(config_.wbc_mpc_delta_force_constraint_enabled ? "true" : "false") +
         " friction_cone=" +
         std::string(config_.wbc_mpc_friction_cone_constraint_enabled ? "true" : "false") +
+        " stance_zero_velocity=" +
+        std::string(config_.wbc_mpc_stance_zero_velocity_constraint_enabled ? "true" : "false") +
+        " swing_normal_velocity=" +
+        std::string(config_.wbc_mpc_swing_normal_velocity_constraint_enabled ? "true" : "false") +
+        " swing_position=" +
+        std::string(config_.wbc_mpc_swing_position_constraint_enabled ? "true" : "false") +
         " barrier=[" + std::to_string(config_.wbc_mpc_friction_barrier_mu) + ", " +
         std::to_string(config_.wbc_mpc_friction_barrier_delta) + "]" +
         " friction_regularization=" +
@@ -504,6 +463,7 @@ std::vector<std::string> WholeBodyMpcController::diagnostics() const {
         std::string(config_.wbc_contact_force_qp_enabled ? "enabled" : "disabled") +
         " whole_body_qp=" +
         std::string(config_.wbc_whole_body_qp_enabled ? "enabled" : "disabled") +
+        " solver=" + (whole_body_wbc_ ? whole_body_wbc_->name() : std::string("none")) +
         " floating_base_eom=" +
         std::string(config_.wbc_floating_base_eom_enabled ? "enabled" : "disabled") +
         " stance_contact=" +
@@ -524,7 +484,9 @@ std::vector<std::string> WholeBodyMpcController::diagnostics() const {
         " tau_reg=" +
         std::string(config_.wbc_tau_regularization_enabled ? "enabled" : "disabled") +
         " swing_ik=" +
-        std::string(config_.wbc_swing_ik_enabled ? "enabled" : "disabled"));
+        std::string(config_.wbc_swing_ik_enabled ? "enabled" : "disabled") +
+        " mpc_joint_command=" +
+        std::string(config_.wbc_mpc_joint_command_enabled ? "enabled" : "disabled"));
     lines.emplace_back(
         "whole_body_mpc torque_output: " +
         std::string(config_.wbc_torque_enabled ? "enabled" : "disabled") +
@@ -654,6 +616,8 @@ StandingStabilizer::Command WholeBodyMpcController::apply(
     correction.mpc_right_force_z =
         static_cast<float>(mpc_output.desired_right_contact_force.z());
     correction.wbc_mpc_force_target_used = mpc_output.has_desired_contact_forces;
+    apply_mpc_joint_command(mpc_output, current_joint_position,
+                            command.position, command.velocity);
 
     ContactForceQp::Input qp_input = build_contact_qp_input(mpc_output, contacts);
     const ContactForceQp::Result contact_result =
@@ -670,9 +634,18 @@ StandingStabilizer::Command WholeBodyMpcController::apply(
     correction.wbc_achieved_pitch_moment =
         static_cast<float>(contact_result.achieved_wrench.tail<3>().y());
 
-    const WbcQpResult wbc_result =
-        solve_whole_body_wbc_qp(latest_kinematics_, contacts, gait_reference,
-                                mpc_output, contact_result, blend);
+    WholeBodyWbc::Input wbc_input;
+    wbc_input.kinematics = &latest_kinematics_;
+    wbc_input.contacts = &contacts;
+    wbc_input.gait_reference = &gait_reference;
+    wbc_input.mpc_output = &mpc_output;
+    wbc_input.contact_result = &contact_result;
+    wbc_input.configured_joint_velocity_indices =
+        &robot_model_->configured_joint_velocity_indices();
+    wbc_input.blend = blend;
+    const WholeBodyWbc::Result wbc_result =
+        whole_body_wbc_ ? whole_body_wbc_->solve(wbc_input)
+                        : WholeBodyWbc::Result{};
     correction.wbc_whole_body_qp_used = config_.wbc_whole_body_qp_enabled;
     correction.qp_used = correction.wbc_whole_body_qp_used;
     correction.wbc_left_normal_force = static_cast<float>(wbc_result.left_force.z());
@@ -974,268 +947,52 @@ ContactForceQp::Result WholeBodyMpcController::make_nominal_contact_result(
     return result;
 }
 
-WholeBodyMpcController::WbcQpResult WholeBodyMpcController::solve_whole_body_wbc_qp(
-    const RobotModel::Kinematics& kinematics,
-    const ContactPointSet& contacts,
-    const RecoveryGaitPlanner::Reference& gait_reference,
+void WholeBodyMpcController::apply_mpc_joint_command(
     const CentroidalMpc::Output& mpc_output,
-    const ContactForceQp::Result& contact_result,
-    float blend) const {
-    WbcQpResult result;
-    result.tau.assign(config_.joint_num, 0.0f);
-    const int nv = robot_model_->nv();
-    const int contact_count = static_cast<int>(contacts.positions.size());
-    const int contact_dim = contact_count * 3;
-    const int tau_dim = config_.joint_num;
-    const int qddot_offset = 0;
-    const int force_offset = nv;
-    const int tau_offset = nv + contact_dim;
-    const int decision_dim = nv + contact_dim + tau_dim;
-    const auto& joint_v_indices = robot_model_->configured_joint_velocity_indices();
-    result.contact_count = contact_count;
-
-    if (contact_count <= 0 || contacts.jacobian.rows() != contact_dim ||
-        contacts.jacobian.cols() != nv || contacts.jacobian_dot_v.size() != contact_dim) {
-        throw std::runtime_error("whole_body_mpc contact point set is invalid");
+    const std::vector<float>& current_joint_position,
+    std::vector<float>& command_position,
+    std::vector<float>& command_velocity) const {
+    if (!config_.wbc_mpc_joint_command_enabled ||
+        !mpc_output.has_desired_joint_command ||
+        current_joint_position.size() != command_position.size() ||
+        current_joint_position.size() != command_velocity.size() ||
+        mpc_output.desired_joint_velocity.size() !=
+            static_cast<int>(current_joint_position.size())) {
+        return;
     }
 
-    if (!config_.wbc_whole_body_qp_enabled) {
-        result.left_force = contact_result.left_force;
-        result.right_force = contact_result.right_force;
-        result.achieved_wrench = contact_result.achieved_wrench;
-        return result;
-    }
+    std::vector<int> controlled_joint_indices = left_leg_joint_indices_;
+    controlled_joint_indices.insert(controlled_joint_indices.end(),
+                                    right_leg_joint_indices_.begin(),
+                                    right_leg_joint_indices_.end());
+    const double position_gain =
+        std::clamp(static_cast<double>(config_.wbc_mpc_joint_command_position_gain),
+                   0.0, 1.0);
+    const double velocity_scale =
+        std::max(static_cast<double>(config_.wbc_mpc_joint_command_velocity_scale),
+                 0.0);
+    const double velocity_limit =
+        static_cast<double>(config_.wbc_swing_max_joint_velocity);
 
-    Eigen::VectorXd contact_force_target = Eigen::VectorXd::Zero(contact_dim);
-    if (static_cast<int>(contact_result.contact_forces.size()) == contact_count) {
-        for (int i = 0; i < contact_count; i++) {
-            contact_force_target.segment<3>(i * 3) = contact_result.contact_forces[i];
+    for (int joint_index : controlled_joint_indices) {
+        if (joint_index < 0 ||
+            joint_index >= static_cast<int>(command_position.size())) {
+            continue;
         }
-    }
-
-    const int dynamics_rows = config_.wbc_floating_base_eom_enabled ? nv : 0;
-    const int stance_contact_rows =
-        config_.wbc_stance_contact_constraint_enabled ? contact_dim : 0;
-    Eigen::MatrixXd equality(dynamics_rows + stance_contact_rows, decision_dim);
-    Eigen::VectorXd equality_rhs(dynamics_rows + stance_contact_rows);
-    equality.setZero();
-    equality_rhs.setZero();
-    int equality_row = 0;
-    if (config_.wbc_floating_base_eom_enabled) {
-        equality.block(equality_row, qddot_offset, nv, nv) = kinematics.mass_matrix;
-        equality.block(equality_row, force_offset, nv, contact_dim) =
-            -contacts.jacobian.transpose();
-        for (int i = 0; i < tau_dim; i++) {
-            equality(equality_row + joint_v_indices[i], tau_offset + i) = -1.0;
+        const double desired_velocity =
+            mpc_output.desired_joint_velocity[joint_index];
+        double target =
+            static_cast<double>(current_joint_position[joint_index]) +
+            position_gain * static_cast<double>(config_.dt) * desired_velocity;
+        if (!config_.joint_limits.empty()) {
+            const int lower_idx = joint_index * 2;
+            target = std::clamp(target, config_.joint_limits[lower_idx],
+                                config_.joint_limits[lower_idx + 1]);
         }
-        equality_rhs.segment(equality_row, nv) = -kinematics.nonlinear_effects;
-        equality_row += nv;
+        command_position[joint_index] = static_cast<float>(target);
+        command_velocity[joint_index] = static_cast<float>(
+            clamp_abs(velocity_scale * desired_velocity, velocity_limit));
     }
-    if (config_.wbc_stance_contact_constraint_enabled) {
-        equality.block(equality_row, qddot_offset, contact_dim, nv) = contacts.jacobian;
-        equality_rhs.segment(equality_row, contact_dim) = -contacts.jacobian_dot_v;
-        equality_row += contact_dim;
-    }
-
-    Eigen::Matrix<double, 6, 1> desired_base_accel =
-        Eigen::Matrix<double, 6, 1>::Zero();
-    desired_base_accel.head<3>() = mpc_output.desired_com_acceleration;
-    desired_base_accel.tail<3>() = mpc_output.desired_angular_acceleration;
-
-    const double base_weight =
-        std::sqrt(std::max(static_cast<double>(config_.wbc_moment_tracking_weight), 1.0e-9));
-    const double force_weight =
-        std::sqrt(std::max(static_cast<double>(config_.wbc_force_tracking_weight), 0.0));
-    const double qddot_weight =
-        std::sqrt(std::max(static_cast<double>(config_.wbc_regularization_weight), 1.0e-9));
-    const double tau_weight =
-        std::sqrt(std::max(static_cast<double>(config_.wbc_smooth_weight), 1.0e-9));
-    const double swing_weight =
-        std::sqrt(std::max(static_cast<double>(config_.wbc_swing_tracking_weight), 0.0));
-    const int swing_dim =
-        config_.wbc_swing_task_enabled
-            ? (gait_reference.left_swing ? 3 : 0) +
-                  (gait_reference.right_swing ? 3 : 0)
-            : 0;
-
-    const int base_task_rows = config_.wbc_base_accel_task_enabled ? 6 : 0;
-    const int force_task_rows = config_.wbc_contact_force_task_enabled ? contact_dim : 0;
-    const int qddot_task_rows = config_.wbc_qddot_regularization_enabled ? nv : 0;
-    const int tau_task_rows = config_.wbc_tau_regularization_enabled ? tau_dim : 0;
-    const int task_rows =
-        base_task_rows + force_task_rows + swing_dim + qddot_task_rows + tau_task_rows;
-    Eigen::MatrixXd task(task_rows, decision_dim);
-    Eigen::VectorXd task_rhs(task_rows);
-    task.setZero();
-    task_rhs.setZero();
-    int row = 0;
-    if (config_.wbc_base_accel_task_enabled) {
-        task.block(row, qddot_offset, 6, nv) = base_weight * kinematics.base_jacobian;
-        task_rhs.segment(row, 6) =
-            base_weight * (desired_base_accel - kinematics.base_jacobian_dot_v);
-        row += 6;
-    }
-    if (config_.wbc_contact_force_task_enabled) {
-        task.block(row, force_offset, contact_dim, contact_dim) =
-            force_weight * Eigen::MatrixXd::Identity(contact_dim, contact_dim);
-        task_rhs.segment(row, contact_dim) = force_weight * contact_force_target;
-        row += contact_dim;
-    }
-    const auto add_swing_task =
-        [&](const RecoveryGaitPlanner::FootReference& foot_reference,
-            const Eigen::Vector3d& current_position,
-            const Eigen::Vector3d& current_velocity,
-            const Eigen::Matrix<double, 6, Eigen::Dynamic>& foot_jacobian,
-            const Eigen::Matrix<double, 6, 1>& foot_jacobian_dot_v) {
-            if (!config_.wbc_swing_task_enabled || !foot_reference.active) {
-                return;
-            }
-            const Eigen::Vector3d position_error =
-                foot_reference.position - current_position;
-            const Eigen::Vector3d velocity_error =
-                foot_reference.velocity - current_velocity;
-            const Eigen::Vector3d desired_acceleration =
-                foot_reference.acceleration +
-                static_cast<double>(config_.wbc_swing_kp) * position_error +
-                static_cast<double>(config_.wbc_swing_kd) * velocity_error;
-            result.swing_error = std::max(result.swing_error, position_error.norm());
-            task.block(row, qddot_offset, 3, nv) =
-                swing_weight * foot_jacobian.topRows<3>();
-            task_rhs.segment(row, 3) =
-                swing_weight * (desired_acceleration - foot_jacobian_dot_v.head<3>());
-            row += 3;
-        };
-    add_swing_task(gait_reference.left_foot,
-                   kinematics.left_foot_pose.translation(),
-                   kinematics.left_foot_velocity,
-                   kinematics.left_foot_jacobian,
-                   kinematics.left_foot_jacobian_dot_v);
-    add_swing_task(gait_reference.right_foot,
-                   kinematics.right_foot_pose.translation(),
-                   kinematics.right_foot_velocity,
-                   kinematics.right_foot_jacobian,
-                   kinematics.right_foot_jacobian_dot_v);
-    if (config_.wbc_qddot_regularization_enabled) {
-        task.block(row, qddot_offset, nv, nv) =
-            qddot_weight * Eigen::MatrixXd::Identity(nv, nv);
-        row += nv;
-    }
-    if (config_.wbc_tau_regularization_enabled) {
-        task.block(row, tau_offset, tau_dim, tau_dim) =
-            tau_weight * Eigen::MatrixXd::Identity(tau_dim, tau_dim);
-        row += tau_dim;
-    }
-
-    Eigen::MatrixXd hessian =
-        task.transpose() * task + 1.0e-8 * Eigen::MatrixXd::Identity(decision_dim, decision_dim);
-    Eigen::VectorXd gradient_rhs = task.transpose() * task_rhs;
-
-    const int friction_rows = config_.wbc_friction_constraint_enabled ? contact_count * 6 : 0;
-    const int torque_limit_rows = config_.wbc_torque_limit_constraint_enabled ? tau_dim * 2 : 0;
-    const int inequality_rows = friction_rows + torque_limit_rows;
-    Eigen::MatrixXd inequality(inequality_rows, decision_dim);
-    Eigen::VectorXd inequality_rhs(inequality_rows);
-    inequality.setZero();
-    inequality_rhs.setZero();
-    int ineq_row = 0;
-    const int right_contact_count = contact_count - contacts.left_contact_count;
-    if (config_.wbc_friction_constraint_enabled) {
-        for (int i = 0; i < contact_count; i++) {
-            const int same_foot_count =
-                i < contacts.left_contact_count ? contacts.left_contact_count : right_contact_count;
-            const double normal_divisor = static_cast<double>(std::max(same_foot_count, 1));
-            const double min_normal_force =
-                static_cast<double>(config_.wbc_min_normal_force) / normal_divisor;
-            const double max_normal_force =
-                static_cast<double>(config_.wbc_max_normal_force) / normal_divisor;
-            const int fx = force_offset + i * 3;
-            const int fy = fx + 1;
-            const int fz = fx + 2;
-            const double mu = static_cast<double>(config_.wbc_friction_coefficient);
-
-            inequality(ineq_row, fx) = 1.0;
-            inequality(ineq_row, fz) = -mu;
-            inequality_rhs[ineq_row++] = 0.0;
-            inequality(ineq_row, fx) = -1.0;
-            inequality(ineq_row, fz) = -mu;
-            inequality_rhs[ineq_row++] = 0.0;
-            inequality(ineq_row, fy) = 1.0;
-            inequality(ineq_row, fz) = -mu;
-            inequality_rhs[ineq_row++] = 0.0;
-            inequality(ineq_row, fy) = -1.0;
-            inequality(ineq_row, fz) = -mu;
-            inequality_rhs[ineq_row++] = 0.0;
-            inequality(ineq_row, fz) = -1.0;
-            inequality_rhs[ineq_row++] = -min_normal_force;
-            inequality(ineq_row, fz) = 1.0;
-            inequality_rhs[ineq_row++] = max_normal_force;
-        }
-    }
-
-    const double torque_blend = std::clamp(static_cast<double>(blend), 0.0, 1.0);
-    if (config_.wbc_torque_limit_constraint_enabled) {
-        for (int i = 0; i < tau_dim; i++) {
-            const double scale = config_.wbc_torque_joint_scale.empty()
-                ? 0.0
-                : std::abs(config_.wbc_torque_joint_scale[i]);
-            const double torque_bound =
-                torque_blend * scale * static_cast<double>(config_.wbc_max_joint_torque);
-            inequality(ineq_row, tau_offset + i) = 1.0;
-            inequality_rhs[ineq_row++] = torque_bound;
-            inequality(ineq_row, tau_offset + i) = -1.0;
-            inequality_rhs[ineq_row++] = torque_bound;
-        }
-    }
-
-    const LinearQpResult qp_solution = solve_active_set_qp(
-        hessian, gradient_rhs, equality, equality_rhs, inequality, inequality_rhs,
-        config_.wbc_active_set_iterations);
-    const Eigen::VectorXd solution = qp_solution.x;
-    result.max_qp_violation = qp_solution.max_violation;
-    result.active_constraint_count = qp_solution.active_constraint_count;
-    result.dynamics_residual = (equality * solution - equality_rhs).lpNorm<Eigen::Infinity>();
-
-    Eigen::VectorXd solved_force = solution.segment(force_offset, contact_dim);
-    Vector3dList solved_contact_forces;
-    solved_contact_forces.resize(contact_count, Eigen::Vector3d::Zero());
-    for (int i = 0; i < contact_count; i++) {
-        solved_contact_forces[i] = solved_force.segment<3>(i * 3);
-        if (i < contacts.left_contact_count) {
-            result.left_force += solved_contact_forces[i];
-        } else {
-            result.right_force += solved_contact_forces[i];
-        }
-    }
-    result.achieved_wrench = contact_wrench(
-        kinematics.com_position, contacts.positions, solved_contact_forces);
-
-    const Eigen::VectorXd solved_tau = solution.segment(tau_offset, tau_dim);
-    for (int i = 0; i < config_.joint_num; i++) {
-        const double scale = config_.wbc_torque_joint_scale.empty()
-            ? 0.0
-            : std::abs(config_.wbc_torque_joint_scale[i]);
-        const double torque_bound =
-            torque_blend * scale * static_cast<double>(config_.wbc_max_joint_torque);
-        double command_tau = solved_tau[i];
-        if (!std::isfinite(command_tau)) {
-            command_tau = 0.0;
-        }
-        const double raw_abs_tau = std::abs(command_tau);
-        if (raw_abs_tau > result.max_raw_joint_torque) {
-            result.max_raw_joint_torque = raw_abs_tau;
-            result.max_torque_joint_index = i;
-        }
-        command_tau = clamp_abs(command_tau, torque_bound);
-        if (torque_bound > 1.0e-6 && raw_abs_tau > torque_bound - 1.0e-5) {
-            result.saturated_joint_count++;
-        }
-        if (config_.wbc_torque_enabled) {
-            result.tau[i] = static_cast<float>(command_tau);
-            result.max_command_joint_torque =
-                std::max(result.max_command_joint_torque, std::abs(command_tau));
-        }
-    }
-    return result;
 }
 
 void WholeBodyMpcController::apply_swing_ik_targets(

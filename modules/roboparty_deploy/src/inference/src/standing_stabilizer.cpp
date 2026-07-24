@@ -47,6 +47,12 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.wbc_mpc_yaw_weight < 0.0f ||
         config_.wbc_mpc_joint_angle_weight < 0.0f ||
         config_.wbc_mpc_joint_velocity_weight < 0.0f ||
+        config_.wbc_mpc_swing_position_weight < 0.0f ||
+        config_.wbc_mpc_joint_command_position_gain < 0.0f ||
+        config_.wbc_mpc_joint_command_velocity_scale < 0.0f ||
+        config_.wbc_mpc_swing_time_scale < 0.0f ||
+        config_.wbc_mpc_swing_lift_off_velocity < 0.0f ||
+        config_.wbc_mpc_swing_touch_down_velocity < 0.0f ||
         config_.wbc_mpc_ad_model_folder.empty()) {
         throw std::runtime_error("StandingStabilizer WBC MPC parameters are invalid");
     }

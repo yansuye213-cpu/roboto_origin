@@ -41,6 +41,8 @@ class Ocs2CentroidalModel {
 
     Eigen::VectorXd model_order_joint_vector(
         const Eigen::VectorXd& configured_order_vector) const;
+    Eigen::VectorXd configured_order_joint_vector(
+        const Eigen::VectorXd& model_order_vector) const;
 
    private:
     ocs2::PinocchioInterface pinocchio_interface_;

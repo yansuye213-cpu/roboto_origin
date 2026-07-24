@@ -10,6 +10,7 @@
 #include "whole_body_mpc/reference/contact_schedule.hpp"
 #include "whole_body_mpc/reference/recovery_gait_planner.hpp"
 #include "whole_body_mpc/wbc/contact_force_qp.hpp"
+#include "whole_body_mpc/wbc/whole_body_wbc.hpp"
 
 #include <memory>
 #include <string>
@@ -36,32 +37,7 @@ class WholeBodyMpcController {
     const std::string& model_path() const { return config_.whole_body_model_path; }
 
    private:
-    struct WbcQpResult {
-        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
-        std::vector<float> tau;
-        Eigen::Vector3d left_force = Eigen::Vector3d::Zero();
-        Eigen::Vector3d right_force = Eigen::Vector3d::Zero();
-        Eigen::Matrix<double, 6, 1> achieved_wrench = Eigen::Matrix<double, 6, 1>::Zero();
-        double max_raw_joint_torque = 0.0;
-        double max_command_joint_torque = 0.0;
-        double max_qp_violation = 0.0;
-        double dynamics_residual = 0.0;
-        double swing_error = 0.0;
-        int contact_count = 0;
-        int active_constraint_count = 0;
-        int saturated_joint_count = 0;
-        int max_torque_joint_index = -1;
-    };
-
-    struct ContactPointSet {
-        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
-        Vector3dList positions;
-        int left_contact_count = 0;
-        Eigen::MatrixXd jacobian;
-        Eigen::VectorXd jacobian_dot_v;
-    };
+    using ContactPointSet = WholeBodyWbc::ContactPointSet;
 
     void validate_model_config() const;
     Eigen::Vector3d foot_contact_center(const Eigen::Isometry3d& foot_pose) const;
@@ -80,13 +56,6 @@ class WholeBodyMpcController {
     ContactPointSet build_contact_point_set(
         const RobotModel::Kinematics& kinematics,
         const RecoveryGaitPlanner::Reference& gait_reference) const;
-    WbcQpResult solve_whole_body_wbc_qp(
-        const RobotModel::Kinematics& kinematics,
-        const ContactPointSet& contacts,
-        const RecoveryGaitPlanner::Reference& gait_reference,
-        const CentroidalMpc::Output& mpc_output,
-        const ContactForceQp::Result& contact_result,
-        float blend) const;
     RecoveryGaitPlanner::Reference build_gait_reference(
         const StandingStabilizer::Measurement& measurement,
         const RobotModel::Kinematics& kinematics);
@@ -96,6 +65,11 @@ class WholeBodyMpcController {
     void apply_swing_ik_targets(
         const RobotModel::Kinematics& kinematics,
         const RecoveryGaitPlanner::Reference& gait_reference,
+        const std::vector<float>& current_joint_position,
+        std::vector<float>& command_position,
+        std::vector<float>& command_velocity) const;
+    void apply_mpc_joint_command(
+        const CentroidalMpc::Output& mpc_output,
         const std::vector<float>& current_joint_position,
         std::vector<float>& command_position,
         std::vector<float>& command_velocity) const;
@@ -114,6 +88,7 @@ class WholeBodyMpcController {
     std::unique_ptr<BaseStateEstimator> base_state_estimator_;
     std::unique_ptr<CentroidalMpc> centroidal_mpc_;
     std::unique_ptr<ContactForceQp> contact_force_qp_;
+    std::unique_ptr<WholeBodyWbc> whole_body_wbc_;
     std::unique_ptr<RecoveryGaitPlanner> recovery_gait_planner_;
     std::unique_ptr<ContactSchedulePlanner> contact_schedule_planner_;
     RobotModel::Kinematics neutral_kinematics_;

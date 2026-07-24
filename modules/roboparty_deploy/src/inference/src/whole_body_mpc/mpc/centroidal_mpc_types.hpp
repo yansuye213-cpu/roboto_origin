@@ -18,6 +18,9 @@ struct CentroidalMpcConfig {
     double control_dt = 0.004;
     bool enabled = true;
     std::string backend = "ocs2";
+    bool mrt_enabled = false;
+    bool mrt_first_solve_blocking = true;
+    double mrt_max_policy_age = 0.08;
     double orientation_weight = 120.0;
     double angular_rate_weight = 1.4;
     double com_weight = 30.0;
@@ -34,6 +37,9 @@ struct CentroidalMpcConfig {
     bool normal_force_constraint_enabled = true;
     bool delta_force_constraint_enabled = true;
     bool friction_cone_constraint_enabled = true;
+    bool stance_zero_velocity_constraint_enabled = true;
+    bool swing_normal_velocity_constraint_enabled = true;
+    bool swing_position_constraint_enabled = true;
     double friction_barrier_mu = 0.1;
     double friction_barrier_delta = 5.0;
     double friction_regularization = 25.0;
@@ -47,6 +53,12 @@ struct CentroidalMpcConfig {
     double yaw_weight = 1.0;
     double joint_angle_weight = 0.5;
     double joint_velocity_weight = 0.02;
+    double swing_position_weight = 10.0;
+    double joint_velocity_limit = 2.0;
+    double swing_height = 0.035;
+    double swing_time_scale = 0.15;
+    double swing_lift_off_velocity = 0.0;
+    double swing_touch_down_velocity = 0.0;
     double target_roll = 0.0;
     double target_pitch = 0.0;
     std::string model_path;
@@ -54,6 +66,7 @@ struct CentroidalMpcConfig {
     std::string right_foot_frame;
     std::vector<std::string> joint_order;
     std::vector<double> nominal_joint_angles;
+    std::vector<double> joint_position_limits;
     std::string ad_model_folder = "/tmp/roboparty_ocs2";
     bool ad_recompile = false;
     bool ad_verbose = false;
@@ -98,9 +111,12 @@ struct CentroidalMpcOutput {
     Eigen::Matrix<double, 4, 1> control = Eigen::Matrix<double, 4, 1>::Zero();
     Eigen::Matrix<double, 6, 1> contact_force_delta =
         Eigen::Matrix<double, 6, 1>::Zero();
+    Eigen::VectorXd desired_joint_position = Eigen::VectorXd::Zero(0);
+    Eigen::VectorXd desired_joint_velocity = Eigen::VectorXd::Zero(0);
     std::string backend = "disabled";
     bool solved = false;
     bool has_desired_contact_forces = false;
+    bool has_desired_joint_command = false;
     int iterations = 0;
     double objective = 0.0;
 };

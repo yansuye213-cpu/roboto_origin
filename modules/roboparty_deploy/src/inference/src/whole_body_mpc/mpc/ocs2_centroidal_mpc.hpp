@@ -6,8 +6,13 @@
 #include "whole_body_mpc/mpc/centroidal_mpc_backend.hpp"
 
 #include <memory>
+#include <condition_variable>
+#include <cstdint>
+#include <mutex>
+#include <thread>
 
 #include <ocs2_core/Types.h>
+#include <ocs2_oc/oc_data/PrimalSolution.h>
 #include <ocs2_oc/oc_problem/OptimalControlProblem.h>
 #include <ocs2_oc/synchronized_module/ReferenceManager.h>
 #include <ocs2_sqp/SqpMpc.h>
@@ -15,6 +20,7 @@
 namespace whole_body_mpc {
 
 class Ocs2CentroidalModel;
+class SwitchedModelReferenceManager;
 
 class Ocs2CentroidalMpc final : public CentroidalMpcBackend {
    public:
@@ -46,6 +52,23 @@ class Ocs2CentroidalMpc final : public CentroidalMpcBackend {
                      int iterations,
                      double objective,
                      CentroidalMpcOutput& output) const;
+    struct SolveRequest;
+    struct PolicySnapshot;
+    SolveRequest make_solve_request(const CentroidalMpcInput& input,
+                                    const ocs2::vector_t& state,
+                                    double time) const;
+    bool run_solver_iteration(const SolveRequest& request,
+                              PolicySnapshot& policy);
+    bool compute_control_from_policy(const ocs2::PrimalSolution& solution,
+                                     double time,
+                                     const ocs2::vector_t& state,
+                                     ocs2::vector_t& control) const;
+    bool try_get_policy_snapshot(double time, PolicySnapshot& policy) const;
+    void publish_policy_snapshot(PolicySnapshot policy);
+    void start_mrt_worker();
+    void stop_mrt_worker();
+    void enqueue_mrt_request(SolveRequest request);
+    void mrt_worker_loop();
     void validate_input(const CentroidalMpcInput& input) const;
     void configure_solver();
 
@@ -54,12 +77,26 @@ class Ocs2CentroidalMpc final : public CentroidalMpcBackend {
     std::unique_ptr<Ocs2CentroidalModel> model_;
     ocs2::OptimalControlProblem problem_;
     std::shared_ptr<ocs2::ReferenceManager> reference_manager_;
+    std::shared_ptr<SwitchedModelReferenceManager> switched_reference_manager_;
     std::unique_ptr<ocs2::Initializer> initializer_;
     std::unique_ptr<ocs2::SqpMpc> mpc_;
     ocs2::vector_t last_input_;
     ocs2::vector_t nominal_joint_position_;
+    ocs2::vector_t joint_position_lower_;
+    ocs2::vector_t joint_position_upper_;
     bool has_last_input_ = false;
     double time_ = 0.0;
+    mutable std::mutex solver_mutex_;
+    std::mutex mrt_request_mutex_;
+    std::condition_variable mrt_request_cv_;
+    std::thread mrt_worker_;
+    bool mrt_worker_running_ = false;
+    bool mrt_stop_requested_ = false;
+    bool mrt_request_pending_ = false;
+    uint64_t mrt_next_sequence_ = 1;
+    std::unique_ptr<SolveRequest> mrt_pending_request_;
+    mutable std::mutex mrt_policy_mutex_;
+    std::unique_ptr<PolicySnapshot> mrt_policy_;
 };
 
 }  // namespace whole_body_mpc
