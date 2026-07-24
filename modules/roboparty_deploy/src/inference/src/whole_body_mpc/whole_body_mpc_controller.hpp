@@ -69,7 +69,9 @@ class WholeBodyMpcController {
         const StandingStabilizer::Measurement& measurement,
         const ContactPointSet& contacts,
         const RecoveryGaitPlanner::Reference& gait_reference,
-        const ContactSchedule& contact_schedule) const;
+        const ContactSchedule& contact_schedule,
+        const std::vector<float>& current_joint_position,
+        const std::vector<float>& current_joint_velocity) const;
     ContactForceQp::Input build_contact_qp_input(
         const CentroidalMpc::Output& mpc_output,
         const ContactPointSet& contacts) const;

@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 
 #include <string>
+#include <vector>
 
 #include "whole_body_mpc/reference/contact_schedule.hpp"
 
@@ -42,8 +43,20 @@ struct CentroidalMpcConfig {
     double friction_coefficient = 0.45;
     double min_normal_force = 0.0;
     double max_normal_force = 420.0;
+    double base_height_weight = 5.0;
+    double yaw_weight = 1.0;
+    double joint_angle_weight = 0.5;
+    double joint_velocity_weight = 0.02;
     double target_roll = 0.0;
     double target_pitch = 0.0;
+    std::string model_path;
+    std::string left_foot_frame;
+    std::string right_foot_frame;
+    std::vector<std::string> joint_order;
+    std::vector<double> nominal_joint_angles;
+    std::string ad_model_folder = "/tmp/roboparty_ocs2";
+    bool ad_recompile = false;
+    bool ad_verbose = false;
 };
 
 struct CentroidalMpcInput {
@@ -60,6 +73,12 @@ struct CentroidalMpcInput {
     Eigen::Vector3d left_foot_position = Eigen::Vector3d::Zero();
     Eigen::Vector3d right_foot_position = Eigen::Vector3d::Zero();
     Eigen::Vector3d neutral_com_offset = Eigen::Vector3d::Zero();
+    Eigen::Vector3d base_position = Eigen::Vector3d::Zero();
+    Eigen::Vector3d base_orientation_zyx = Eigen::Vector3d::Zero();
+    Eigen::Vector3d base_linear_velocity = Eigen::Vector3d::Zero();
+    Eigen::Vector3d base_angular_velocity = Eigen::Vector3d::Zero();
+    Eigen::VectorXd joint_position = Eigen::VectorXd::Zero(0);
+    Eigen::VectorXd joint_velocity = Eigen::VectorXd::Zero(0);
     double mass = 0.0;
     double roll_inertia = 1.0;
     double pitch_inertia = 1.0;

@@ -42,7 +42,12 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.wbc_mpc_friction_regularization <= 0.0f ||
         config_.wbc_mpc_max_angular_accel < 0.0f ||
         config_.wbc_mpc_max_com_accel < 0.0f ||
-        config_.wbc_mpc_max_contact_force_delta < 0.0f) {
+        config_.wbc_mpc_max_contact_force_delta < 0.0f ||
+        config_.wbc_mpc_base_height_weight < 0.0f ||
+        config_.wbc_mpc_yaw_weight < 0.0f ||
+        config_.wbc_mpc_joint_angle_weight < 0.0f ||
+        config_.wbc_mpc_joint_velocity_weight < 0.0f ||
+        config_.wbc_mpc_ad_model_folder.empty()) {
         throw std::runtime_error("StandingStabilizer WBC MPC parameters are invalid");
     }
     if (config_.wbc_state_velocity_filter_alpha < 0.0f ||
@@ -115,6 +120,12 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
 
     if (config_.whole_body_joint_order.size() != static_cast<size_t>(config_.joint_num)) {
         throw std::runtime_error("StandingStabilizer whole_body_joint_order size mismatch");
+    }
+    if (!config_.whole_body_nominal_joint_angles.empty() &&
+        config_.whole_body_nominal_joint_angles.size() !=
+            static_cast<size_t>(config_.joint_num)) {
+        throw std::runtime_error(
+            "StandingStabilizer whole_body_nominal_joint_angles size mismatch");
     }
 
     whole_body_mpc_controller_ =

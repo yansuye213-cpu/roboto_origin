@@ -30,6 +30,9 @@ find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 REQUIRED)
 find_package(pinocchio REQUIRED)
 find_package(ocs2_sqp QUIET)
+find_package(ocs2_centroidal_model QUIET)
+find_package(ocs2_pinocchio_interface QUIET)
+find_package(ocs2_robotic_tools QUIET)
 
 option(YAML_BUILD_SHARED_LIBS "Build shared library" OFF)
 option(YAML_CPP_BUILD_TESTS "Build tests" OFF)
@@ -52,18 +55,29 @@ endif()
 set(OCS2_SOURCES)
 set(OCS2_DEPENDENCIES)
 set(ROBOPARTY_WITH_OCS2 OFF)
-if(ocs2_sqp_FOUND AND TARGET ocs2_sqp::ocs2_sqp)
+if(ocs2_sqp_FOUND AND TARGET ocs2_sqp::ocs2_sqp
+   AND ocs2_centroidal_model_FOUND
+   AND TARGET ocs2_centroidal_model::ocs2_centroidal_model
+   AND ocs2_pinocchio_interface_FOUND
+   AND TARGET ocs2_pinocchio_interface::ocs2_pinocchio_interface
+   AND ocs2_robotic_tools_FOUND
+   AND TARGET ocs2_robotic_tools::ocs2_robotic_tools)
   find_package(Boost REQUIRED COMPONENTS system filesystem log log_setup)
-  message(STATUS "OCS2 found: enabling OCS2 centroidal MPC backend")
+  message(STATUS "OCS2 found: enabling full Pinocchio centroidal MPC backend")
   set(ROBOPARTY_WITH_OCS2 ON)
   list(APPEND OCS2_SOURCES
+    src/whole_body_mpc/model/centroidal_model_info.cpp
+    src/whole_body_mpc/reference/mode_schedule_adapter.cpp
     src/whole_body_mpc/mpc/ocs2_centroidal_mpc.cpp
   )
   list(APPEND OCS2_DEPENDENCIES
     ocs2_sqp::ocs2_sqp
+    ocs2_centroidal_model::ocs2_centroidal_model
+    ocs2_pinocchio_interface::ocs2_pinocchio_interface
+    ocs2_robotic_tools::ocs2_robotic_tools
   )
 else()
-  message(STATUS "OCS2 not found: stand_wbc_mpc_backend=ocs2 will report a runtime error")
+  message(STATUS "Full OCS2 centroidal dependencies not found: stand_wbc_mpc_backend=ocs2 will report a runtime error")
 endif()
 
 add_subdirectory(src)

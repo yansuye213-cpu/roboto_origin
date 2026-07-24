@@ -21,6 +21,7 @@ class StandingStabilizer {
         std::string whole_body_left_foot_link;
         std::string whole_body_right_foot_link;
         std::vector<std::string> whole_body_joint_order;
+        std::vector<double> whole_body_nominal_joint_angles;
         bool validate_whole_body_model = false;
         bool wbc_mpc_enabled = true;
         std::string wbc_mpc_backend = "ocs2";
@@ -50,6 +51,13 @@ class StandingStabilizer {
         float wbc_mpc_max_angular_accel = 12.0f;
         float wbc_mpc_max_com_accel = 2.0f;
         float wbc_mpc_max_contact_force_delta = 60.0f;
+        float wbc_mpc_base_height_weight = 5.0f;
+        float wbc_mpc_yaw_weight = 1.0f;
+        float wbc_mpc_joint_angle_weight = 0.5f;
+        float wbc_mpc_joint_velocity_weight = 0.02f;
+        std::string wbc_mpc_ad_model_folder = "/tmp/roboparty_ocs2";
+        bool wbc_mpc_ad_recompile = false;
+        bool wbc_mpc_ad_verbose = false;
         bool wbc_state_estimation_enabled = true;
         float wbc_state_velocity_filter_alpha = 0.85f;
         float wbc_state_max_base_linear_velocity = 0.8f;

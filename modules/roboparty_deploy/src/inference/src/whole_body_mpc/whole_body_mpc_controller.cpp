@@ -47,6 +47,28 @@ std::string format_pose(const Eigen::Isometry3d& pose) {
     return ss.str();
 }
 
+Eigen::Vector3d base_zyx_from_quaternion(const Eigen::Quaterniond& q_b2w) {
+    Eigen::Quaterniond q = q_b2w;
+    if (q.norm() <= 1.0e-9) {
+        q = Eigen::Quaterniond::Identity();
+    } else {
+        q.normalize();
+    }
+    const Eigen::Matrix3d R = q.toRotationMatrix();
+    const double pitch = std::asin(std::clamp(-R(2, 0), -1.0, 1.0));
+    const double roll = std::atan2(R(2, 1), R(2, 2));
+    const double yaw = std::atan2(R(1, 0), R(0, 0));
+    return Eigen::Vector3d(yaw, pitch, roll);
+}
+
+Eigen::VectorXd vector_from_float_list(const std::vector<float>& values) {
+    Eigen::VectorXd output(values.size());
+    for (size_t i = 0; i < values.size(); i++) {
+        output[static_cast<int>(i)] = static_cast<double>(values[i]);
+    }
+    return output;
+}
+
 double clamp_abs(double value, double limit) {
     if (limit <= 0.0) {
         return 0.0;
@@ -281,8 +303,20 @@ WholeBodyMpcController::WholeBodyMpcController(const StandingStabilizer::Config&
     mpc_config.friction_coefficient = config_.wbc_friction_coefficient;
     mpc_config.min_normal_force = config_.wbc_min_normal_force;
     mpc_config.max_normal_force = config_.wbc_max_normal_force;
+    mpc_config.base_height_weight = config_.wbc_mpc_base_height_weight;
+    mpc_config.yaw_weight = config_.wbc_mpc_yaw_weight;
+    mpc_config.joint_angle_weight = config_.wbc_mpc_joint_angle_weight;
+    mpc_config.joint_velocity_weight = config_.wbc_mpc_joint_velocity_weight;
     mpc_config.target_roll = config_.wbc_target_roll;
     mpc_config.target_pitch = config_.wbc_target_pitch;
+    mpc_config.model_path = config_.whole_body_model_path;
+    mpc_config.left_foot_frame = config_.whole_body_left_foot_link;
+    mpc_config.right_foot_frame = config_.whole_body_right_foot_link;
+    mpc_config.joint_order = config_.whole_body_joint_order;
+    mpc_config.nominal_joint_angles = config_.whole_body_nominal_joint_angles;
+    mpc_config.ad_model_folder = config_.wbc_mpc_ad_model_folder;
+    mpc_config.ad_recompile = config_.wbc_mpc_ad_recompile;
+    mpc_config.ad_verbose = config_.wbc_mpc_ad_verbose;
     centroidal_mpc_ = std::make_unique<CentroidalMpc>(mpc_config);
 
     ContactForceQp::Config qp_config;
@@ -421,8 +455,21 @@ std::vector<std::string> WholeBodyMpcController::diagnostics() const {
         " max_accel=[" + std::to_string(config_.wbc_mpc_max_angular_accel) + ", " +
         std::to_string(config_.wbc_mpc_max_com_accel) + "]" +
         " force_weight=" + std::to_string(config_.wbc_mpc_force_weight) +
+        " joint_angle_weight=" +
+        std::to_string(config_.wbc_mpc_joint_angle_weight) +
+        " joint_velocity_weight=" +
+        std::to_string(config_.wbc_mpc_joint_velocity_weight) +
         " max_force_delta=" +
         std::to_string(config_.wbc_mpc_max_contact_force_delta));
+    lines.emplace_back(
+        "whole_body_mpc ocs2_full_centroidal: ad_folder=" +
+        config_.wbc_mpc_ad_model_folder +
+        " ad_recompile=" +
+        std::string(config_.wbc_mpc_ad_recompile ? "true" : "false") +
+        " ad_verbose=" +
+        std::string(config_.wbc_mpc_ad_verbose ? "true" : "false") +
+        " foot_contacts=[3dof:" + config_.whole_body_left_foot_link + ", " +
+        config_.whole_body_right_foot_link + "]");
     lines.emplace_back(
         "whole_body_mpc centroidal_mpc_constraints: zero_swing_force=" +
         std::string(config_.wbc_mpc_zero_swing_force_constraint_enabled ? "true" : "false") +
@@ -579,7 +626,8 @@ StandingStabilizer::Command WholeBodyMpcController::apply(
     StandingStabilizer::Correction correction;
     const CentroidalMpc::Input mpc_input =
         build_centroidal_mpc_input(measurement, contacts, gait_reference,
-                                   contact_schedule);
+                                   contact_schedule, current_joint_position,
+                                   current_joint_velocity);
     const CentroidalMpc::Output mpc_output = centroidal_mpc_->solve(mpc_input);
     correction.wbc_mpc_backend = mpc_output.backend;
     correction.wbc_mpc_used = mpc_output.solved;
@@ -689,7 +737,9 @@ CentroidalMpc::Input WholeBodyMpcController::build_centroidal_mpc_input(
     const StandingStabilizer::Measurement& measurement,
     const ContactPointSet& contacts,
     const RecoveryGaitPlanner::Reference& gait_reference,
-    const ContactSchedule& contact_schedule) const {
+    const ContactSchedule& contact_schedule,
+    const std::vector<float>& current_joint_position,
+    const std::vector<float>& current_joint_velocity) const {
     Eigen::Vector3d support_center = Eigen::Vector3d::Zero();
     for (const Eigen::Vector3d& position : contacts.positions) {
         support_center += position;
@@ -710,6 +760,23 @@ CentroidalMpc::Input WholeBodyMpcController::build_centroidal_mpc_input(
     input.left_foot_position = foot_contact_center(latest_kinematics_.left_foot_pose);
     input.right_foot_position = foot_contact_center(latest_kinematics_.right_foot_pose);
     input.neutral_com_offset << neutral_com_offset_xy_.x(), neutral_com_offset_xy_.y(), 0.0;
+    const Eigen::Quaterniond base_orientation(
+        measurement.qw, measurement.qx, measurement.qy, measurement.qz);
+    Eigen::Quaterniond normalized_base_orientation = base_orientation;
+    if (normalized_base_orientation.norm() <= 1.0e-9) {
+        normalized_base_orientation = Eigen::Quaterniond::Identity();
+    } else {
+        normalized_base_orientation.normalize();
+    }
+    input.base_position = Eigen::Vector3d::Zero();
+    input.base_orientation_zyx =
+        base_zyx_from_quaternion(normalized_base_orientation);
+    input.base_linear_velocity = latest_state_estimate_.base_linear_velocity;
+    input.base_angular_velocity =
+        normalized_base_orientation *
+        Eigen::Vector3d(measurement.wx, measurement.wy, 0.0);
+    input.joint_position = vector_from_float_list(current_joint_position);
+    input.joint_velocity = vector_from_float_list(current_joint_velocity);
     input.mass = robot_mass_;
     if (latest_kinematics_.mass_matrix.rows() >= 6 &&
         latest_kinematics_.mass_matrix.cols() >= 6) {

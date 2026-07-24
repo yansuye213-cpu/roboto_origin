@@ -8,60 +8,57 @@
 #include <memory>
 
 #include <ocs2_core/Types.h>
-#include <ocs2_core/initialization/DefaultInitializer.h>
 #include <ocs2_oc/oc_problem/OptimalControlProblem.h>
 #include <ocs2_oc/synchronized_module/ReferenceManager.h>
 #include <ocs2_sqp/SqpMpc.h>
 
 namespace whole_body_mpc {
 
-struct Ocs2CentroidalMpcData;
+class Ocs2CentroidalModel;
 
 class Ocs2CentroidalMpc final : public CentroidalMpcBackend {
    public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     explicit Ocs2CentroidalMpc(CentroidalMpcConfig config);
+    ~Ocs2CentroidalMpc() override;
 
     const std::string& name() const override { return name_; }
     void reset() override;
     CentroidalMpcOutput solve(const CentroidalMpcInput& input) override;
 
    private:
-    static constexpr int kStateDim = 8;
-    static constexpr int kInputDim = 6;
-
-    Eigen::Matrix<double, kStateDim, 1> make_state(
-        const CentroidalMpcInput& input) const;
+    ocs2::vector_t make_state(const CentroidalMpcInput& input);
     ocs2::matrix_t state_weight(bool terminal) const;
     ocs2::matrix_t input_weight() const;
     ocs2::TargetTrajectories make_target_trajectories(
-        const CentroidalMpcInput& input, double time) const;
-    Eigen::Matrix<double, kInputDim, 1> clamp_force_delta(
-        const Eigen::Matrix<double, kInputDim, 1>& control,
-        const CentroidalMpcInput& input) const;
-    Eigen::Vector3d nominal_foot_force(bool in_contact, int contact_feet,
-                                       const CentroidalMpcInput& input) const;
+        const CentroidalMpcInput& input, double time,
+        const ocs2::vector_t& current_state) const;
+    ocs2::vector_t nominal_input(bool left_contact, bool right_contact) const;
+    ocs2::vector_t project_input(const ocs2::vector_t& control,
+                                 bool left_contact,
+                                 bool right_contact) const;
     Eigen::Vector3d project_foot_force(const Eigen::Vector3d& force,
                                        bool in_contact) const;
-    void fill_output(const Eigen::Matrix<double, kInputDim, 1>& control,
-                     const Eigen::Matrix<double, kStateDim, 1>& state,
+    void fill_output(const ocs2::vector_t& control,
+                     const ocs2::vector_t& full_state,
                      const CentroidalMpcInput& input,
                      int iterations,
                      double objective,
                      CentroidalMpcOutput& output) const;
-    void update_dynamics_data(const CentroidalMpcInput& input);
+    void validate_input(const CentroidalMpcInput& input) const;
     void configure_solver();
 
     CentroidalMpcConfig config_;
     std::string name_ = "ocs2";
-    std::shared_ptr<Ocs2CentroidalMpcData> dynamics_data_;
+    std::unique_ptr<Ocs2CentroidalModel> model_;
     ocs2::OptimalControlProblem problem_;
     std::shared_ptr<ocs2::ReferenceManager> reference_manager_;
-    ocs2::DefaultInitializer initializer_;
+    std::unique_ptr<ocs2::Initializer> initializer_;
     std::unique_ptr<ocs2::SqpMpc> mpc_;
-    Eigen::Matrix<double, kInputDim, 1> last_control_ =
-        Eigen::Matrix<double, kInputDim, 1>::Zero();
+    ocs2::vector_t last_input_;
+    ocs2::vector_t nominal_joint_position_;
+    bool has_last_input_ = false;
     double time_ = 0.0;
 };
 

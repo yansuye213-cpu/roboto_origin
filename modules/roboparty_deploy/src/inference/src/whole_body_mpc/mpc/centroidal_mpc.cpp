@@ -43,7 +43,12 @@ CentroidalMpc::CentroidalMpc(Config config) : config_(std::move(config)) {
         config_.max_contact_force_delta < 0.0 ||
         config_.friction_coefficient < 0.0 ||
         config_.min_normal_force < 0.0 ||
-        config_.max_normal_force < config_.min_normal_force) {
+        config_.max_normal_force < config_.min_normal_force ||
+        config_.base_height_weight < 0.0 ||
+        config_.yaw_weight < 0.0 ||
+        config_.joint_angle_weight < 0.0 ||
+        config_.joint_velocity_weight < 0.0 ||
+        config_.ad_model_folder.empty()) {
         throw std::runtime_error("CentroidalMpc weights and limits are invalid");
     }
     if (!is_supported_backend_name(config_.backend)) {
