@@ -19,7 +19,8 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("act_alpha", 0.9);
     this->declare_parameter<int>("intra_threads", -1);
     this->declare_parameter<std::string>("perception_obs_topic", "elevation_data");
-    this->declare_parameter<int>("joint_num", 23);
+    this->declare_parameter<int>("joint_num", 21);
+    this->declare_parameter<int>("interrupt_action_size", 8);
     this->declare_parameter<int>("decimation", 10);
     this->declare_parameter<float>("dt", 0.001);
     this->declare_parameter<float>("obs_scales_lin_vel", 1.0);
@@ -197,6 +198,7 @@ void InferenceNode::load_config() {
     this->get_parameter("intra_threads", intra_threads_);
     this->get_parameter("perception_obs_topic", perception_obs_topic_);
     this->get_parameter("joint_num", joint_num_);
+    this->get_parameter("interrupt_action_size", interrupt_action_size_);
     this->get_parameter("decimation", decimation_);
     this->get_parameter("dt", dt_);
     this->get_parameter("obs_scales_lin_vel", obs_scales_lin_vel_);
@@ -361,6 +363,9 @@ void InferenceNode::load_config() {
 
     if (joint_num_ <= 0) {
         throw std::runtime_error("joint_num must be positive");
+    }
+    if (interrupt_action_size_ <= 0 || interrupt_action_size_ > joint_num_) {
+        throw std::runtime_error("interrupt_action_size must be positive and no larger than joint_num");
     }
     if (clip_cmd_.size() != 6) {
         throw std::runtime_error("clip_cmd must contain [min_vx, max_vx, min_vy, max_vy, min_wz, max_wz]");
@@ -574,10 +579,15 @@ void InferenceNode::load_config() {
         policy.obs_layout = parse_obs_layout(obs_layouts[i], "obs_layouts[" + std::to_string(i) + "]");
         policy.obs_layout_sizes.reserve(policy.obs_layout.size());
         for (const ObsSourceSpec& source : policy.obs_layout) {
-            if ((source.name == "dof_pos" || source.name == "dof_vel" || source.name == "last_action") &&
-                source.size < joint_num_) {
+            const bool joint_sized_source =
+                source.name == "dof_pos" ||
+                source.name == "dof_vel" ||
+                source.name == "last_action" ||
+                source.name == "motion_pos" ||
+                source.name == "motion_vel";
+            if (joint_sized_source && source.size != joint_num_) {
                 throw std::runtime_error(source.name + " in obs_layouts[" + std::to_string(i) +
-                                         "] must be at least joint_num");
+                                         "] must equal joint_num");
             }
             policy.obs_layout_sizes.push_back(source.size);
             policy.obs_num += source.size;
@@ -588,6 +598,16 @@ void InferenceNode::load_config() {
         if (!policy_extra_obs_layout.empty()) {
             policy.extra_obs_layout = parse_obs_layout(policy_extra_obs_layout, "extra_obs_layouts[" + std::to_string(i) + "]");
             for (const ObsSourceSpec& source : policy.extra_obs_layout) {
+                const bool joint_sized_source =
+                    source.name == "dof_pos" ||
+                    source.name == "dof_vel" ||
+                    source.name == "last_action" ||
+                    source.name == "motion_pos" ||
+                    source.name == "motion_vel";
+                if (joint_sized_source && source.size != joint_num_) {
+                    throw std::runtime_error(source.name + " in extra_obs_layouts[" + std::to_string(i) +
+                                             "] must equal joint_num");
+                }
                 policy.extra_obs_num += source.size;
                 if (source.name == "perception") {
                     perception_obs_num_ = source.size;
@@ -621,6 +641,7 @@ void InferenceNode::load_config() {
     print_vector<std::string>("extra_obs_layouts", extra_obs_layouts);
     RCLCPP_INFO(this->get_logger(), "perception_obs_topic: %s", perception_obs_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "joint_num: %d", joint_num_);
+    RCLCPP_INFO(this->get_logger(), "interrupt_action_size: %d", interrupt_action_size_);
     RCLCPP_INFO(this->get_logger(), "decimation: %d", decimation_);
     RCLCPP_INFO(this->get_logger(), "dt: %f", dt_);
     RCLCPP_INFO(this->get_logger(), "obs_scales_lin_vel: %f", obs_scales_lin_vel_);
@@ -955,6 +976,12 @@ void InferenceNode::subs_elevation_callback(const std::shared_ptr<std_msgs::msg:
 void InferenceNode::subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg){
     if(supports_interrupt() && is_interrupt_.load()){
         std::unique_lock<std::mutex> lock(interrupt_mutex_);
+        if (msg->position.size() < interrupt_action_.size()) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "Interrupt joint_ref_states too small: got %zu, expected %zu",
+                                 msg->position.size(), interrupt_action_.size());
+            return;
+        }
         for(size_t i = 0; i < interrupt_action_.size(); i++){
             interrupt_action_[i] = msg->position[i];
         }

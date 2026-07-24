@@ -113,7 +113,7 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         }
         model_output_size *= static_cast<size_t>(ctx->output_shape[i]);
     }
-    if (usd2urdf_.size() > model_output_size) {
+    if (model_output_size != usd2urdf_.size()) {
         throw std::runtime_error(
             "ONNX output size mismatch for " + model_path + ": model provides " +
             std::to_string(model_output_size) + " actions, but usd2urdf maps " +
@@ -217,7 +217,7 @@ void InferenceNode::initialize_runtime_state() {
         perception_obs_buffer_.clear();
     }
     if (has_obs_source("interrupt")) {
-        interrupt_action_.assign(10, 0.0f);
+        interrupt_action_.assign(interrupt_action_size_, 0.0f);
     } else {
         interrupt_action_.clear();
     }

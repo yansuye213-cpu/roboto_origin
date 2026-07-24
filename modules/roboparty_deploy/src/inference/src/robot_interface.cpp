@@ -3,6 +3,43 @@
 
 #include "robot_interface.hpp"
 
+namespace {
+
+void require_config_size(const std::string& name, size_t actual, size_t expected) {
+    if (actual != expected) {
+        throw std::runtime_error(name + " must contain " + std::to_string(expected) +
+                                 " values, got " + std::to_string(actual));
+    }
+}
+
+size_t checked_motor_count(const std::vector<long int>& motor_num) {
+    size_t total = 0;
+    for (size_t i = 0; i < motor_num.size(); ++i) {
+        if (motor_num[i] < 0) {
+            throw std::runtime_error("motors.motor_num[" + std::to_string(i) + "] must not be negative");
+        }
+        total += static_cast<size_t>(motor_num[i]);
+    }
+    return total;
+}
+
+void require_index_permutation(const std::string& name, const std::vector<long int>& values, size_t count) {
+    require_config_size(name, values.size(), count);
+    std::vector<bool> seen(count, false);
+    for (size_t i = 0; i < values.size(); ++i) {
+        const long int value = values[i];
+        if (value < 0 || value >= static_cast<long int>(count)) {
+            throw std::runtime_error(name + "[" + std::to_string(i) + "] is out of range");
+        }
+        if (seen[static_cast<size_t>(value)]) {
+            throw std::runtime_error(name + " contains duplicate index " + std::to_string(value));
+        }
+        seen[static_cast<size_t>(value)] = true;
+    }
+}
+
+}
+
 RobotInterface::RobotInterface(const std::string& config_file) {
     YAML::Node config = YAML::LoadFile(config_file);
 
@@ -28,6 +65,14 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         if (motors_node["motor_id"]) motors_cfg_->motor_id_ = motors_node["motor_id"].as<std::vector<long int>>();
         if (motors_node["motor_model"]) motors_cfg_->motor_model_ = motors_node["motor_model"].as<std::vector<long int>>();
         if (motors_node["motor_num"]) motors_cfg_->motor_num_ = motors_node["motor_num"].as<std::vector<long int>>();
+        const size_t bus_count = motors_cfg_->motor_interface_.size();
+        require_config_size("motors.motor_interface_type", motors_cfg_->motor_interface_type_.size(), bus_count);
+        require_config_size("motors.motor_type", motors_cfg_->motor_type_.size(), bus_count);
+        require_config_size("motors.motor_num", motors_cfg_->motor_num_.size(), bus_count);
+        const size_t motor_count = checked_motor_count(motors_cfg_->motor_num_);
+        require_config_size("motors.motor_id", motors_cfg_->motor_id_.size(), motor_count);
+        require_config_size("motors.motor_model", motors_cfg_->motor_model_.size(), motor_count);
+        require_config_size("motors.motor_zero_offset", motors_cfg_->motor_zero_offset_.size(), motor_count);
         setup_motors();
     } else {
         throw std::runtime_error("Motors configuration not found in " + config_file);
@@ -41,6 +86,21 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         if (robot_node["close_chain_motor_idx"]) robot_cfg_->close_chain_motor_idx_ = robot_node["close_chain_motor_idx"].as<std::vector<long int>>();
         if (robot_node["motor_sign"]) robot_cfg_->motor_sign_ = robot_node["motor_sign"].as<std::vector<long int>>();
         if (robot_node["urdf2motor"]) robot_cfg_->urdf2motor_ = robot_node["urdf2motor"].as<std::vector<long int>>();
+        const size_t joint_count = motors_cfg_->motor_id_.size();
+        require_config_size("robot.kp", robot_cfg_->kp_.size(), joint_count);
+        require_config_size("robot.kd", robot_cfg_->kd_.size(), joint_count);
+        require_config_size("robot.motor_sign", robot_cfg_->motor_sign_.size(), joint_count);
+        require_index_permutation("robot.urdf2motor", robot_cfg_->urdf2motor_, joint_count);
+        if (!robot_cfg_->close_chain_motor_idx_.empty() &&
+            robot_cfg_->close_chain_motor_idx_.size() != 4) {
+            throw std::runtime_error("robot.close_chain_motor_idx must be empty or contain 4 motor indices");
+        }
+        for (size_t i = 0; i < robot_cfg_->close_chain_motor_idx_.size(); ++i) {
+            const long int index = robot_cfg_->close_chain_motor_idx_[i];
+            if (index < 0 || index >= static_cast<long int>(joint_count)) {
+                throw std::runtime_error("robot.close_chain_motor_idx[" + std::to_string(i) + "] is out of range");
+            }
+        }
         motor2urdf_ = std::vector<int>(motors_cfg_->motor_id_.size(), -1);
         for (size_t i = 0; i < robot_cfg_->urdf2motor_.size(); ++i) {
             motor2urdf_[robot_cfg_->urdf2motor_[i]] = i;

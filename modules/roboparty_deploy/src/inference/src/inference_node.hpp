@@ -196,7 +196,7 @@ class InferenceNode : public rclcpp::Node {
     std::string perception_obs_topic_;
     size_t current_motion_policy_idx_ = 0;
     int active_policy_idx_ = 0;
-    int perception_obs_num_, joint_num_;
+    int perception_obs_num_, joint_num_, interrupt_action_size_;
     int decimation_;
     std::unique_ptr<Ort::Env> env_;
     int intra_threads_;
