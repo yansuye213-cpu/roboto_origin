@@ -35,7 +35,7 @@ import numpy as np
 from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
 from isaaclab.sensors import RayCaster
 from isaaclab.utils.buffers import CircularBuffer
-from isaaclab.utils.math import quat_apply_inverse,quat_apply_yaw, quat_inv 
+from isaaclab.utils.math import quat_apply_inverse,quat_apply_yaw, quat_inv
 from robolab.tasks.direct.base import (  # noqa:F401
     BaseEnv,
     BaseEnvCfg
@@ -54,8 +54,8 @@ class AttnEncEnv(BaseEnv):
         lin_vel = robot.data.root_lin_vel_b
         projected_gravity = robot.data.projected_gravity_b
         command = self.command_generator.command
-        joint_pos = robot.data.joint_pos - robot.data.default_joint_pos
-        joint_vel = robot.data.joint_vel - robot.data.default_joint_vel
+        joint_pos = self._select_action_joints(robot.data.joint_pos - robot.data.default_joint_pos)
+        joint_vel = self._select_action_joints(robot.data.joint_vel - robot.data.default_joint_vel)
         action = self.action_buffer.buffer[:, -1, :]
         if self.cfg.attn_enc.vel_in_obs:
             current_actor_obs = torch.cat(
@@ -97,8 +97,8 @@ class AttnEncEnv(BaseEnv):
         )
         feet_height = torch.clamp(feet_height - 0.04, min=0.0, max=1.0)
         feet_height = torch.nan_to_num(feet_height, nan=1.0, posinf=1.0, neginf=0)
-        joint_torque = robot.data.applied_torque
-        joint_acc = robot.data.joint_acc
+        joint_torque = self._select_action_joints(robot.data.applied_torque)
+        joint_acc = self._select_action_joints(robot.data.joint_acc)
         root_quat_w = robot.data.root_quat_w.unsqueeze(1).expand(-1, 2, -1)
         root_pos_w = robot.data.root_pos_w.unsqueeze(1).expand(-1, 2, -1)
         feet_pos_w = robot.data.body_pos_w[:, self.feet_cfg.body_ids]
@@ -111,7 +111,7 @@ class AttnEncEnv(BaseEnv):
             current_critic_obs = torch.cat(
                 [current_actor_obs, lin_vel * self.obs_scales.lin_vel, feet_contact.float(), feet_contact_force.flatten(1), feet_air_time.flatten(1), feet_height.flatten(1), joint_acc, joint_torque, feet_pos.flatten(1)], dim=-1
             )
-        
+
         return current_actor_obs, current_critic_obs
 
     def _get_observations(self):
@@ -198,4 +198,4 @@ class AttnEncEnv(BaseEnv):
         self.critic_obs_buffer = CircularBuffer(
             max_len=self.cfg.robot.critic_obs_history_length, batch_size=self.num_envs, device=self.device
         )
-        
+

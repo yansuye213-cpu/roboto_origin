@@ -50,6 +50,8 @@ class InterruptEnv(BaseEnv):
 
         self.episode_length = np.ceil(self.max_episode_length_s / self.step_dt)
         self.num_actions = self.robot.data.default_joint_pos.shape[1]
+        self.action_joint_ids = None
+        self._configure_action_joints()
         self.clip_actions = self.cfg.normalization.clip_actions
         self.clip_obs = self.cfg.normalization.clip_observations
 
@@ -74,6 +76,7 @@ class InterruptEnv(BaseEnv):
         if self.cfg.interrupt.use_interrupt:
             self.interrupt_joint_cfg = SceneEntityCfg(name="robot", joint_names=self.cfg.interrupt.interrupt_joint_names, preserve_order=True)
             self.interrupt_joint_cfg.resolve(self.scene)
+            self.interrupt_action_ids = self._action_indices_for_joint_ids(self.interrupt_joint_cfg.joint_ids)
             all_indices = torch.arange(self.num_envs, device=self.device)
             perm = torch.randperm(self.num_envs, device=self.device)
             self.interrupt_indices = all_indices[perm[:int(self.num_envs * self.cfg.interrupt.interrupt_ratio)]]
@@ -89,6 +92,16 @@ class InterruptEnv(BaseEnv):
         
         self.init_obs_buffer()
 
+    def _action_indices_for_joint_ids(self, joint_ids):
+        if self.action_joint_ids is None:
+            return list(joint_ids)
+
+        action_index_by_joint_id = {int(joint_id): action_id for action_id, joint_id in enumerate(self.action_joint_ids)}
+        try:
+            return [action_index_by_joint_id[int(joint_id)] for joint_id in joint_ids]
+        except KeyError as exc:
+            raise RuntimeError(f"Interrupt joint id {exc.args[0]} is not part of the policy action joints.") from exc
+
     def compute_current_observations(self):
         robot = self.robot
         net_contact_forces = self.contact_sensor.data.net_forces_w_history
@@ -96,8 +109,8 @@ class InterruptEnv(BaseEnv):
         ang_vel = robot.data.root_ang_vel_b
         projected_gravity = robot.data.projected_gravity_b
         command = self.command_generator.command
-        joint_pos = robot.data.joint_pos - robot.data.default_joint_pos
-        joint_vel = robot.data.joint_vel - robot.data.default_joint_vel
+        joint_pos = self._select_action_joints(robot.data.joint_pos - robot.data.default_joint_pos)
+        joint_vel = self._select_action_joints(robot.data.joint_vel - robot.data.default_joint_vel)
         action = self.action_buffer.buffer[:, -1, :]
         current_actor_obs = torch.cat(
             [
@@ -128,8 +141,8 @@ class InterruptEnv(BaseEnv):
         )
         feet_height = torch.clamp(feet_height - 0.04, min=0.0, max=1.0)
         feet_height = torch.nan_to_num(feet_height, nan=1.0, posinf=1.0, neginf=0)
-        joint_torque = robot.data.applied_torque
-        joint_acc = robot.data.joint_acc
+        joint_torque = self._select_action_joints(robot.data.applied_torque)
+        joint_acc = self._select_action_joints(robot.data.joint_acc)
         current_critic_obs = torch.cat(
             [current_actor_obs, root_lin_vel * self.obs_scales.lin_vel, feet_contact.float(), feet_contact_force.flatten(1), feet_air_time.flatten(1), feet_height.flatten(1), joint_acc, joint_torque], dim=-1
         )
@@ -272,7 +285,10 @@ class InterruptEnv(BaseEnv):
         )
 
         self.interrupt_mask[env_ids] = (torch.rand(len(env_ids))<=0.5).to(self.device) # Reset with half with interrupt.
-        self.interrupt_actions[env_ids] = self.robot.data.joint_pos[env_ids][:, self.interrupt_joint_cfg.joint_ids] - self.robot.data.default_joint_pos[env_ids][:, self.interrupt_joint_cfg.joint_ids]
+        self.interrupt_actions[env_ids] = (
+            self.robot.data.joint_pos[env_ids][:, self.interrupt_joint_cfg.joint_ids]
+            - self.robot.data.default_joint_pos[env_ids][:, self.interrupt_joint_cfg.joint_ids]
+        ) / self.cfg.robot.action_scale
 
     def uniform_interrupt_resample(self):
         '''Sample Noise from Uniform interruption'''
@@ -280,13 +296,15 @@ class InterruptEnv(BaseEnv):
 
         # clip interrupt
         left_env_mask1 = targets[:, 1] < 0.5
-        targets[left_env_mask1][:, 2] = torch.clamp(targets[left_env_mask1][:, 2], min=-1.57, max=0.85)
+        targets[left_env_mask1, 2] = torch.clamp(targets[left_env_mask1, 2], min=-1.57, max=0.85)
         left_env_mask2 = targets[:, 1] < 0
-        targets[left_env_mask2][:, [2, 3]] = 0
+        targets[left_env_mask2, 2] = 0
+        targets[left_env_mask2, 3] = 0
         right_env_mask1 =  targets[:, 5] > -0.5
-        targets[right_env_mask1][:, 6] = torch.clamp(targets[right_env_mask1][:, 2], min=-0.85, max=1.57)
+        targets[right_env_mask1, 6] = torch.clamp(targets[right_env_mask1, 6], min=-0.85, max=1.57)
         right_env_mask2 =  targets[:, 5] > 0
-        targets[right_env_mask2][:, [6, 7]] = 0
+        targets[right_env_mask2, 6] = 0
+        targets[right_env_mask2, 7] = 0
 
         return torch.clamp(
             targets - self.robot.data.default_joint_pos[:, self.interrupt_joint_cfg.joint_ids], 
@@ -318,11 +336,11 @@ class InterruptEnv(BaseEnv):
         if self.cfg.interrupt.use_interrupt:
             self.random_switch_interrupt() 
             interrupt_action_clip = self.curriculum_interrupt_clipping_mean_rad()
-            self.actions[:, self.interrupt_joint_cfg.joint_ids] = torch.where(
-                self.interrupt_mask.unsqueeze(-1).expand(-1, len(self.interrupt_joint_cfg.joint_ids)),
+            self.actions[:, self.interrupt_action_ids] = torch.where(
+                self.interrupt_mask.unsqueeze(-1).expand(-1, len(self.interrupt_action_ids)),
                 interrupt_action_clip,
-                self.actions[:, self.interrupt_joint_cfg.joint_ids]
+                self.actions[:, self.interrupt_action_ids]
             )
             self.actions = torch.clip(self.actions, -self.clip_actions, self.clip_actions).to(self.device)
 
-        self.actions = self.actions * self.action_scale + self.robot.data.default_joint_pos
+        self.actions = self.actions * self.action_scale + self._select_action_joints(self.robot.data.default_joint_pos)
