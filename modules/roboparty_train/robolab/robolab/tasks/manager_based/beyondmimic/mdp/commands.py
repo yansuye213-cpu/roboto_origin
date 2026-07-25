@@ -66,6 +66,8 @@ class MotionLoader:
         body_indexes: Sequence[int],
         expected_num_joints: int,
         expected_num_bodies: int | None = None,
+        expected_joint_names: Sequence[str] | None = None,
+        expected_body_names: Sequence[str] | None = None,
         device: str = "cpu",
     ):
         assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
@@ -84,6 +86,14 @@ class MotionLoader:
                 f"{motion_file} has joint_pos/joint_vel dims "
                 f"{self.joint_pos.shape[1]}/{self.joint_vel.shape[1]}, expected {expected_num_joints}."
             )
+        if "joint_names" in data.files and expected_joint_names is not None:
+            motion_joint_names = [str(name) for name in data["joint_names"].tolist()]
+            if motion_joint_names != list(expected_joint_names):
+                raise ValueError(
+                    f"{motion_file} joint_names do not match the configured order.\n"
+                    f"Expected: {list(expected_joint_names)}\n"
+                    f"Actual:   {motion_joint_names}"
+                )
         if expected_num_bodies is not None:
             body_counts = {
                 "body_pos_w": self._body_pos_w.shape[1],
@@ -95,6 +105,14 @@ class MotionLoader:
                 raise ValueError(
                     f"{motion_file} has body counts {body_counts}, expected {expected_num_bodies}. "
                     "Regenerate the motion with the current robot asset."
+                )
+        if "body_names" in data.files and expected_body_names is not None:
+            motion_body_names = [str(name) for name in data["body_names"].tolist()]
+            if motion_body_names != list(expected_body_names):
+                raise ValueError(
+                    f"{motion_file} body_names do not match the current robot body order.\n"
+                    f"Expected: {list(expected_body_names)}\n"
+                    f"Actual:   {motion_body_names}"
                 )
         max_body_index = int(torch.max(body_indexes).item()) if len(body_indexes) > 0 else -1
         if max_body_index >= self._body_pos_w.shape[1]:
@@ -149,6 +167,8 @@ class MotionCommand(CommandTerm):
             self.body_indexes,
             expected_num_joints=expected_num_joints,
             expected_num_bodies=self.cfg.expected_num_bodies,
+            expected_joint_names=self.cfg.joint_names,
+            expected_body_names=self.robot.body_names,
             device=self.device,
         )
         self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
