@@ -32,7 +32,7 @@
 
 import os
 
-from robolab.assets.robots import RPO_ACTION_JOINT_NAMES, RPO_CFG
+from robolab.assets.robots import RPO_ACTION_JOINT_NAMES, RPO_CFG, RPO_LINKS
 from robolab.tasks.manager_based.beyondmimic.beyondmimic_env_cfg import BeyondMimicEnvCfg
 
 from isaaclab.utils import configclass
@@ -69,6 +69,7 @@ class RPOBeyondMimicEnvCfg(BeyondMimicEnvCfg):
         self.actions.joint_pos.joint_names = RPO_ACTION_JOINT_NAMES
         _apply_ordered_joint_observations(self.observations)
         self.commands.motion.joint_names = RPO_ACTION_JOINT_NAMES
+        self.commands.motion.expected_num_bodies = len(RPO_LINKS)
         self.commands.motion.motion_file = os.path.join(
             ROBOLAB_ROOT_DIR, "data", "motions", "rpo_bm", "yundong1.npz"
         )

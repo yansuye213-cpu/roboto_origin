@@ -60,7 +60,14 @@ if TYPE_CHECKING:
 
 
 class MotionLoader:
-    def __init__(self, motion_file: str, body_indexes: Sequence[int], expected_num_joints: int, device: str = "cpu"):
+    def __init__(
+        self,
+        motion_file: str,
+        body_indexes: Sequence[int],
+        expected_num_joints: int,
+        expected_num_bodies: int | None = None,
+        device: str = "cpu",
+    ):
         assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
         data = np.load(motion_file)
         self.fps = data["fps"]
@@ -77,6 +84,18 @@ class MotionLoader:
                 f"{motion_file} has joint_pos/joint_vel dims "
                 f"{self.joint_pos.shape[1]}/{self.joint_vel.shape[1]}, expected {expected_num_joints}."
             )
+        if expected_num_bodies is not None:
+            body_counts = {
+                "body_pos_w": self._body_pos_w.shape[1],
+                "body_quat_w": self._body_quat_w.shape[1],
+                "body_lin_vel_w": self._body_lin_vel_w.shape[1],
+                "body_ang_vel_w": self._body_ang_vel_w.shape[1],
+            }
+            if any(count != expected_num_bodies for count in body_counts.values()):
+                raise ValueError(
+                    f"{motion_file} has body counts {body_counts}, expected {expected_num_bodies}. "
+                    "Regenerate the motion with the current robot asset."
+                )
         max_body_index = int(torch.max(body_indexes).item()) if len(body_indexes) > 0 else -1
         if max_body_index >= self._body_pos_w.shape[1]:
             raise ValueError(
@@ -126,7 +145,11 @@ class MotionCommand(CommandTerm):
 
         expected_num_joints = len(self.joint_indexes) if self.joint_indexes is not None else self.robot.data.default_joint_pos.shape[1]
         self.motion = MotionLoader(
-            self.cfg.motion_file, self.body_indexes, expected_num_joints=expected_num_joints, device=self.device
+            self.cfg.motion_file,
+            self.body_indexes,
+            expected_num_joints=expected_num_joints,
+            expected_num_bodies=self.cfg.expected_num_bodies,
+            device=self.device,
         )
         self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.body_pos_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 3, device=self.device)
@@ -444,6 +467,8 @@ class MotionCommandCfg(CommandTermCfg):
     body_names: list[str] = MISSING
     joint_names: list[str] | None = None
     """Motion joint order. If set, joint_pos/joint_vel are interpreted in this order."""
+    expected_num_bodies: int | None = None
+    """If set, motion body arrays must match this full robot body count."""
 
     pose_range: dict[str, tuple[float, float]] = {}
     velocity_range: dict[str, tuple[float, float]] = {}

@@ -60,7 +60,31 @@ RPO_ACTION_JOINT_NAMES = [
     "right_ankle_roll_joint",
 ]
 
-RPO_URDF_JOINT_NAMES = [
+RPO_XML_JOINT_NAMES = [
+    "left_leg_pitch_joint",
+    "left_leg_roll_joint",
+    "left_leg_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_leg_pitch_joint",
+    "right_leg_roll_joint",
+    "right_leg_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_pitch_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_pitch_joint",
+    "head_yaw_joint",
+]
+
+RPO_DEPLOY_JOINT_NAMES = [
     "left_leg_pitch_joint",
     "left_leg_roll_joint",
     "left_leg_yaw_joint",
@@ -84,7 +108,7 @@ RPO_URDF_JOINT_NAMES = [
     "right_elbow_pitch_joint",
 ]
 
-RPO_USD2URDF = [RPO_URDF_JOINT_NAMES.index(joint_name) for joint_name in RPO_ACTION_JOINT_NAMES]
+RPO_USD2URDF = [RPO_DEPLOY_JOINT_NAMES.index(joint_name) for joint_name in RPO_ACTION_JOINT_NAMES]
 RPO_NUM_ACTIONS = len(RPO_ACTION_JOINT_NAMES)
 RPO_ACTION_MIRROR_INDICES = [1, 0, 2, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15, 18, 17, 20, 19]
 RPO_ACTION_MIRROR_SIGNS = [1, 1, -1, -1, -1, 1, 1, -1, -1, -1, -1, 1, 1, -1, -1, 1, 1, 1, 1, -1, -1]
