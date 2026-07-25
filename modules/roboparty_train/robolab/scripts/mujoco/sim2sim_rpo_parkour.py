@@ -17,15 +17,57 @@ import time
 from collections import deque
 from typing import Any, ClassVar
 
-import cv2
-import glfw
-import matplotlib.pyplot as plt
 import mujoco
-import mujoco_viewer
 import numpy as np
-from pynput import keyboard
-from scipy.spatial.transform import Rotation as R
 from tqdm import tqdm
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import glfw
+except ImportError:
+    glfw = None
+
+try:
+    import mujoco_viewer
+except ImportError:
+    mujoco_viewer = None
+
+try:
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+
+try:
+    from .rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
+except ImportError:
+    from rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
 
 try:
     import onnxruntime as ort
@@ -96,10 +138,21 @@ _SPEED_LIMIT_Y = 0.8
 _SPEED_LIMIT_Z = 1.0
 
 
-class CompactOverlayMujocoViewer(mujoco_viewer.MujocoViewer):
+def _require(module, package_name: str, purpose: str):
+    if module is None:
+        raise RuntimeError(f"{package_name} is required {purpose}.")
+    return module
+
+
+_MujocoViewerBase = mujoco_viewer.MujocoViewer if mujoco_viewer is not None else object
+
+
+class CompactOverlayMujocoViewer(_MujocoViewerBase):
     """MujocoViewer with the default left-side overlay hidden."""
 
     def __init__(self, *args, **kwargs):
+        _require(mujoco_viewer, "mujoco-python-viewer", "when running with the GUI viewer")
+        _require(glfw, "glfw", "when running with the GUI viewer")
         super().__init__(*args, **kwargs)
         self.ctx = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_200.value)
         self._velocity_table = None
@@ -437,6 +490,9 @@ def on_release(key):
 
 
 def start_keyboard_listener():
+    if keyboard is None:
+        print("[WARN] pynput is not installed; keyboard controls are disabled.")
+        return None
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     return listener
@@ -444,14 +500,7 @@ def start_keyboard_listener():
 
 def get_obs(data, model):
     """Articulation observation from MuJoCo (matches sim2sim_rpo_amp pattern)."""
-    q = data.qpos.astype(np.double)
-    dq = data.qvel.astype(np.double)
-    quat = data.sensor("orientation").data[[1, 2, 3, 0]].astype(np.double)
-    r = R.from_quat(quat)
-    v = r.apply(data.qvel[:3], inverse=True).astype(np.double)
-    omega = data.sensor("angular-velocity").data.astype(np.double)
-    gvec = r.apply(np.array([0.0, 0.0, -1.0]), inverse=True).astype(np.double)
-    return (q, dq, quat, v, omega, gvec)
+    return get_rpo_obs(data)
 
 
 def pd_control(target_q, q, target_dq, dq, kp, kd):
@@ -459,9 +508,16 @@ def pd_control(target_q, q, target_dq, dq, kp, kd):
 
 
 def _rot_mat_wxyz(quat_wxyz: np.ndarray) -> np.ndarray:
-    """Isaac Lab stores quaternions as (w, x, y, z) on cfg; scipy ``from_quat`` expects (x, y, z, w)."""
+    """Rotation matrix from a wxyz quaternion."""
     w, x, y, z = quat_wxyz
-    return R.from_quat([x, y, z, w]).as_matrix()
+    return np.array(
+        [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
 
 
 def effective_depth_clip_planes(model: mujoco.MjModel) -> tuple[float, float]:
@@ -830,6 +886,7 @@ def run_mujoco_onnx(
     actor: Any,
     cfg,
     headless: bool = False,
+    no_video: bool = False,
     debug_obs: bool = False,
     show_depth_vis: bool = True,
     depth_vis_scale: int = 8,
@@ -843,6 +900,7 @@ def run_mujoco_onnx(
     viewer_fallback_height: int = 720,
     mujoco_full_ui: bool = False,
 ) -> None:
+    cv2_mod = _require(cv2, "opencv-python", "for parkour depth preprocessing")
     enc_in_name = depth_encoder.get_inputs()[0].name
     act_in_name = actor.get_inputs()[0].name
 
@@ -856,6 +914,7 @@ def run_mujoco_onnx(
     print_controls_guide()
 
     model = mujoco.MjModel.from_xml_path(cfg.sim_config.mujoco_model_path)
+    assert_rpo_21_mujoco_model(model, cfg.sim_config.mujoco_model_path)
     configure_depth_rendering(model)
     xml_dt = float(model.opt.timestep)
     macro_dt = float(cfg.sim_config.dt)
@@ -927,19 +986,23 @@ def run_mujoco_onnx(
     depth_vis_pending: tuple[np.ndarray, np.ndarray] | None = None
 
     if headless:
-        renderer = mujoco.Renderer(model, width=1920, height=1080)
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        cam_vid = mujoco.MjvCamera()
-        cam_vid.distance = 4.0
-        cam_vid.azimuth = 45.0
-        cam_vid.elevation = -20.0
-        cam_vid.lookat = [0, 0, 1]
-        out = cv2.VideoWriter(
-            "simulation_parkour.mp4",
-            fourcc,
-            1.0 / cfg.sim_config.dt / cfg.sim_config.decimation,
-            (1920, 1080),
-        )
+        renderer = None
+        cam_vid = None
+        out = None
+        if not no_video:
+            renderer = mujoco.Renderer(model, width=1920, height=1080)
+            fourcc = cv2_mod.VideoWriter_fourcc(*"mp4v")
+            cam_vid = mujoco.MjvCamera()
+            cam_vid.distance = 4.0
+            cam_vid.azimuth = 45.0
+            cam_vid.elevation = -20.0
+            cam_vid.lookat = [0, 0, 1]
+            out = cv2_mod.VideoWriter(
+                "simulation_parkour.mp4",
+                fourcc,
+                1.0 / cfg.sim_config.dt / cfg.sim_config.decimation,
+                (1920, 1080),
+            )
         viewer = None
         use_passive_viewer = False
         passive_viewer_ctx = None
@@ -955,7 +1018,7 @@ def run_mujoco_onnx(
 
     win_depth = f"Raw Depth | Cropped Depth"
     if not headless and show_depth_vis:
-        cv2.namedWindow(win_depth, cv2.WINDOW_NORMAL)
+        cv2_mod.namedWindow(win_depth, cv2_mod.WINDOW_NORMAL)
 
     dt_policy = float(cfg.sim_config.dt) * float(cfg.sim_config.decimation)
     n_step = int(cfg.sim_config.sim_duration / cfg.sim_config.dt)
@@ -1077,7 +1140,7 @@ def run_mujoco_onnx(
                     )
                 )
 
-            if headless:
+            if headless and not no_video:
                 renderer.update_scene(data, camera=cam_vid)
                 if cmd.camera_follow:
                     update_follow_camera(cam_vid, data, model)
@@ -1140,14 +1203,22 @@ def run_mujoco_onnx(
     if depth_renderer is not None and hasattr(depth_renderer, "close"):
         depth_renderer.close()
     if headless:
-        if hasattr(renderer, "close"):
+        if renderer is not None and hasattr(renderer, "close"):
             renderer.close()
-        out.release()
+        if out is not None:
+            out.release()
     else:
         if show_depth_vis:
-            cv2.destroyAllWindows()
+            cv2_mod.destroyAllWindows()
         close_interactive_viewer(viewer, use_passive_viewer, passive_viewer_ctx)
-    keyboard_listener.stop()
+    if keyboard_listener is not None:
+        keyboard_listener.stop()
+
+    if not cfg.sim_config.save_plots:
+        print("Simulation finished.")
+        return
+
+    plt_mod = _require(plt, "matplotlib", "when --save-plots is set")
 
     # Plots (low frequency)
     time_data = np.asarray(time_data)
@@ -1156,7 +1227,7 @@ def run_mujoco_onnx(
     num_joints = cfg.robot_config.num_actions
     n_cols = 4
     n_rows = (num_joints + n_cols - 1) // n_cols
-    fig1, axes1 = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows), sharex=True)
+    fig1, axes1 = plt_mod.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows), sharex=True)
     axes1 = axes1.flatten()
     for i in range(num_joints):
         ax = axes1[i]
@@ -1168,10 +1239,10 @@ def run_mujoco_onnx(
     for i in range(num_joints, len(axes1)):
         fig1.delaxes(axes1[i])
     fig1.suptitle("Joint positions")
-    plt.tight_layout()
+    plt_mod.tight_layout()
     fig1.savefig("joint_positions_parkour.png")
 
-    fig2, axes2 = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+    fig2, axes2 = plt_mod.subplots(3, 1, figsize=(10, 12), sharex=True)
     axes2[0].plot(time_data, commanded_lin_vel_x_data, label="cmd vx", linestyle="--")
     axes2[0].plot(time_data, np.array(actual_lin_vel_data)[:, 0], label="vx")
     axes2[0].grid(True)
@@ -1185,7 +1256,7 @@ def run_mujoco_onnx(
     axes2[2].grid(True)
     axes2[2].legend()
     fig2.suptitle("Base velocity")
-    plt.tight_layout()
+    plt_mod.tight_layout()
     fig2.savefig("base_velocities_parkour.png")
     print("Saved joint_positions_parkour.png, base_velocities_parkour.png")
 
@@ -1218,7 +1289,7 @@ if __name__ == "__main__":
         type=str,
         choices=("stairs", "terrain", "plane"),
         default="stairs",
-        help="Scene: stairs=rpo_stairs.xml (pyramids + trapezoid up/platform/down); terrain=rpo_terrain.xml; plane=flat rpo.xml.",
+        help="Scene: stairs=rpo_21_stairs.xml; terrain=rpo_21_terrain.xml; plane=flat rpo_21.xml.",
     )
     parser.add_argument(
         "--headless",
@@ -1227,18 +1298,30 @@ if __name__ == "__main__":
         help="Run without GUI; record simulation_parkour.mp4 (depth preview and MuJoCo viewer disabled).",
     )
     parser.add_argument(
+        "--no-video",
+        action="store_true",
+        default=False,
+        help="Run headless without creating a MuJoCo renderer/video.",
+    )
+    parser.add_argument(
         "--no_depth_vis",
         action="store_true",
         default=False,
         help="Do not open OpenCV depth preview (default: one window, metric + encoder side by side).",
     )
+    parser.add_argument(
+        "--save-plots",
+        action="store_true",
+        default=False,
+        help="Save joint/base velocity plots after simulation.",
+    )
     args = parser.parse_args()
 
     mjcf_dir = f"{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf"
     scene_xml = {
-        "stairs": f"{mjcf_dir}/rpo_stairs.xml",
-        "terrain": f"{mjcf_dir}/rpo_terrain.xml",
-        "plane": f"{mjcf_dir}/rpo.xml",
+        "stairs": f"{mjcf_dir}/rpo_21_stairs.xml",
+        "terrain": f"{mjcf_dir}/rpo_21_terrain.xml",
+        "plane": f"{mjcf_dir}/rpo_21.xml",
     }
     if args.mujoco_xml:
         xml_path = args.mujoco_xml
@@ -1252,25 +1335,17 @@ if __name__ == "__main__":
             dt = 0.005
             decimation = 4
             depth_camera_body = "torso_link"
+            save_plots = args.save_plots
 
         class robot_config:
-            kps = np.array(
-                [100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40, 150, 40, 40, 40, 30, 20, 40, 40, 40, 30, 20],
-                dtype=np.double,
-            )
-            kds = np.array(
-                [3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 5.0, 2.0, 2.0, 2.0, 1.5, 1.0, 2.0, 2.0, 2.0, 1.5, 1.0],
-                dtype=np.double,
-            )
-            default_pos = np.array(
-                [0, 0, -0.1, 0.3, -0.2, 0, 0, 0, -0.1, 0.3, -0.2, 0, 0, 0.18, 0.06, 0, 0.78, 0, 0.18, -0.06, 0, 0.78, 0],
-                dtype=np.double,
-            )
-            tau_limit = 200.0 * np.ones(23, dtype=np.double)
+            kps = RPO_KPS
+            kds = RPO_KDS
+            default_pos = RPO_DEFAULT_POS
+            tau_limit = RPO_TAU_LIMIT
             frame_stack = 8  # obs history length
-            num_actions = 23
+            num_actions = len(RPO_ACTION_JOINT_NAMES)
             action_scale = 0.25
-            usd2urdf = [0, 6, 12, 1, 7, 13, 18, 2, 8, 14, 19, 3, 9, 15, 20, 4, 10, 16, 21, 5, 11, 17, 22]
+            usd2urdf = RPO_ACTION_TO_MJCF
 
     enc_sess, act_sess = build_onnx_sessions(
         args.depth_encoder, args.actor, providers=_SIM2SIM_PERF_ONNX_PROVIDERS
@@ -1280,6 +1355,7 @@ if __name__ == "__main__":
         act_sess,
         Sim2simCfg(),
         headless=args.headless,
+        no_video=args.no_video,
         debug_obs=_SIM2SIM_PERF_DEBUG_OBS,
         show_depth_vis=not args.no_depth_vis,
         depth_vis_scale=max(1, _SIM2SIM_PERF_DEPTH_VIS_SCALE),

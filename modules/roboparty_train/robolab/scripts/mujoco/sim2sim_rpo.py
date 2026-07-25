@@ -30,14 +30,47 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import mujoco, mujoco_viewer
+import mujoco
 from tqdm import tqdm
-from scipy.spatial.transform import Rotation as R
+try:
+    from .rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
+except ImportError:
+    from rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
 from robolab.assets import ISAAC_DATA_DIR
-import torch
 import os
-import cv2
-import matplotlib.pyplot as plt # Import matplotlib
+
+try:
+    import mujoco_viewer
+except ImportError:
+    mujoco_viewer = None
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 class cmd:
     vx = 0.0
@@ -47,21 +80,19 @@ class cmd:
 def get_obs(data):
     '''Extracts an observation from the mujoco data structure
     '''
-    q = data.qpos.astype(np.double)
-    dq = data.qvel.astype(np.double)
-    quat = data.sensor('orientation').data[[1, 2, 3, 0]].astype(np.double)
-    r = R.from_quat(quat)
-    v = r.apply(data.qvel[:3], inverse=True).astype(np.double)  # In the base frame
-    omega = data.sensor('angular-velocity').data.astype(np.double)
-    gvec = r.apply(np.array([0., 0., -1.]), inverse=True).astype(np.double)
-    return (q, dq, quat, v, omega, gvec)
+    return get_rpo_obs(data)
 
 def pd_control(target_q, q, kp, target_dq, dq, kd):
     '''Calculates torques from position commands
     '''
     return (target_q - q) * kp + (target_dq - dq) * kd
 
-def run_mujoco(policy, cfg, headless=False):
+def _require(module, package_name, purpose):
+    if module is None:
+        raise RuntimeError(f"{package_name} is required {purpose}.")
+    return module
+
+def run_mujoco(policy, cfg, headless=False, no_video=False):
     """
     Run the Mujoco simulation using the provided policy and configuration.
 
@@ -74,6 +105,7 @@ def run_mujoco(policy, cfg, headless=False):
         None
     """
     model = mujoco.MjModel.from_xml_path(cfg.sim_config.mujoco_model_path)
+    assert_rpo_21_mujoco_model(model, cfg.sim_config.mujoco_model_path)
     model.opt.timestep = cfg.sim_config.dt
     data = mujoco.MjData(model)
     data.qpos[-cfg.robot_config.num_actions:] = cfg.robot_config.default_pos
@@ -83,19 +115,22 @@ def run_mujoco(policy, cfg, headless=False):
     os.environ['MUJOCO_GL'] = 'glfw'
     # 根据 headless 参数选择渲染模式
     if headless:
-        renderer = mujoco.Renderer(model, width=1920, height=1080)
-        # 设置视频写入器
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        # 创建并配置相机
-        cam = mujoco.MjvCamera()
-        cam.distance = 4.0      # 增加距离以获得更好的视角
-        cam.azimuth = 45.0     # 水平旋转角度
-        cam.elevation = -20.0   # 垂直俯仰角度
-        cam.lookat = [0, 0, 1]  # 观察点位置
-        out = cv2.VideoWriter('simulation.mp4', fourcc, 1.0/cfg.sim_config.dt/cfg.sim_config.decimation, (1920, 1080))
+        if not no_video:
+            cv2_mod = _require(cv2, "opencv-python", "when running headless video output")
+            renderer = mujoco.Renderer(model, width=1920, height=1080)
+            # 设置视频写入器
+            fourcc = cv2_mod.VideoWriter_fourcc(*'mp4v')
+            # 创建并配置相机
+            cam = mujoco.MjvCamera()
+            cam.distance = 4.0      # 增加距离以获得更好的视角
+            cam.azimuth = 45.0     # 水平旋转角度
+            cam.elevation = -20.0   # 垂直俯仰角度
+            cam.lookat = [0, 0, 1]  # 观察点位置
+            out = cv2_mod.VideoWriter('simulation.mp4', fourcc, 1.0/cfg.sim_config.dt/cfg.sim_config.decimation, (1920, 1080))
     else:
+        viewer_mod = _require(mujoco_viewer, "mujoco-python-viewer", "when running with the GUI viewer")
         mode = 'window'
-        viewer = mujoco_viewer.MujocoViewer(model, data, mode=mode, width=1920, height=1080)
+        viewer = viewer_mod.MujocoViewer(model, data, mode=mode, width=1920, height=1080)
         # 设置窗口模式下的相机参数
         viewer.cam.distance = 4.0
         viewer.cam.azimuth = 45.0
@@ -147,9 +182,10 @@ def run_mujoco(policy, cfg, headless=False):
             obs[0, 6] = cmd.vx 
             obs[0, 7] = cmd.vy 
             obs[0, 8] = cmd.dyaw 
-            obs[0, 9:32] = q_obs
-            obs[0, 32:55] = dq_obs
-            obs[0, 55:78] = action
+            num_actions = cfg.robot_config.num_actions
+            obs[0, 9 : 9 + num_actions] = q_obs
+            obs[0, 9 + num_actions : 9 + 2 * num_actions] = dq_obs
+            obs[0, 9 + 2 * num_actions : 9 + 3 * num_actions] = action
 
             if is_first_frame:
                 hist_obs = np.tile(obs, (cfg.robot_config.frame_stack, 1))
@@ -158,8 +194,19 @@ def run_mujoco(policy, cfg, headless=False):
                 hist_obs = np.concatenate((hist_obs[1:], obs.reshape(1, -1)), axis=0)
 
             policy_input = hist_obs.reshape(1, -1).astype(np.float32)
+            if policy_input.shape[1] != cfg.robot_config.num_observations:
+                raise ValueError(
+                    f"Policy input has {policy_input.shape[1]} observations, "
+                    f"expected {cfg.robot_config.num_observations}."
+                )
             with torch.inference_mode():
-                action[:] = policy(torch.tensor(policy_input))[0].detach().numpy()
+                policy_action = policy(torch.tensor(policy_input))[0].detach().numpy()
+            if policy_action.shape[0] != cfg.robot_config.num_actions:
+                raise ValueError(
+                    f"Policy output has {policy_action.shape[0]} actions, "
+                    f"expected {cfg.robot_config.num_actions}."
+                )
+            action[:] = policy_action
 
             target_q = action * cfg.robot_config.action_scale
             for i in range(len(cfg.robot_config.usd2urdf)):
@@ -186,11 +233,11 @@ def run_mujoco(policy, cfg, headless=False):
             actual_ang_vel_data.append(omega_low_freq) # Use the captured actual ang vel
             # ----------------------------------------------
 
-            if headless:
+            if headless and not no_video:
                 renderer.update_scene(data, camera=cam)
                 img = renderer.render()  # 直接获取RGB图像
                 out.write(img)
-            else:
+            elif not headless:
                 viewer.render()
             
         target_vel = np.zeros((cfg.robot_config.num_actions), dtype=np.double)
@@ -204,11 +251,21 @@ def run_mujoco(policy, cfg, headless=False):
         count_lowlevel += 1
 
     if headless:
-        out.release()
+        if not no_video:
+            out.release()
     else:
         viewer.close()
 
-     # --- Plotting Section (Using only low-frequency data) ---
+    if not cfg.sim_config.save_plots:
+        print("Simulation finished.")
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError("matplotlib is required when --save-plots is set.") from exc
+
+    # --- Plotting Section (Using only low-frequency data) ---
 
     print("Simulation finished. Generating plots...")
 
@@ -303,31 +360,37 @@ if __name__ == '__main__':
     parser.add_argument('--terrain', action='store_true', help='terrain or plane')
     parser.add_argument('--headless', action='store_true',
                       help='Run without GUI and save video')
+    parser.add_argument('--no-video', action='store_true',
+                      help='Run headless without creating a MuJoCo renderer/video')
+    parser.add_argument('--save-plots', action='store_true',
+                      help='Save joint/base velocity plots after simulation')
     args = parser.parse_args()
 
     class Sim2simCfg():
 
         class sim_config:
             if args.terrain:
-                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_terrain.xml'
+                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_21_terrain.xml'
             else:
-                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo.xml'
+                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_21.xml'
             sim_duration = 10.0
             dt = 0.001
             decimation = 20
+            save_plots = args.save_plots
 
         class robot_config:
-            kps = np.array([100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40, 150, 40, 40, 40, 30, 20, 40, 40, 40, 30, 20], dtype=np.double)
-            kds = np.array([3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 5.0, 2.0, 2.0, 2.0, 1.5, 1.0, 2.0, 2.0, 2.0, 1.5, 1.0], dtype=np.double)
-            default_pos = np.array([0, 0, -0.1, 0.3, -0.2, 0, 0, 0, -0.1, 0.3, -0.2, 0, 0, 0.18, 0.06, 0, 0.78, 0, 0.18, -0.06, 0, 0.78, 0], dtype=np.double)
-            tau_limit = 200. * np.ones(23, dtype=np.double)
+            kps = RPO_KPS
+            kds = RPO_KDS
+            default_pos = RPO_DEFAULT_POS
+            tau_limit = RPO_TAU_LIMIT
             frame_stack = 10
-            num_single_obs = 78
-            num_observations = 780
-            num_actions = 23
+            num_actions = len(RPO_ACTION_JOINT_NAMES)
+            num_single_obs = 9 + 3 * num_actions
+            num_observations = num_single_obs * frame_stack
             action_scale = 0.25
-            # 'left_thigh_yaw_joint', 'right_thigh_yaw_joint', 'torso_joint', 'left_thigh_roll_joint', 'right_thigh_roll_joint', 'left_arm_pitch_joint', 'right_arm_pitch_joint', 'left_thigh_pitch_joint', 'right_thigh_pitch_joint', 'left_arm_roll_joint', 'right_arm_roll_joint', 'left_knee_joint', 'right_knee_joint', 'left_arm_yaw_joint', 'right_arm_yaw_joint', 'left_ankle_pitch_joint', 'right_ankle_pitch_joint', 'left_elbow_pitch_joint', 'right_elbow_pitch_joint', 'left_ankle_roll_joint', 'right_ankle_roll_joint', 'left_elbow_yaw_joint', 'right_elbow_yaw_joint'
-            usd2urdf = [0, 6, 12, 1, 7, 13, 18, 2, 8, 14, 19, 3, 9, 15, 20, 4, 10, 16, 21, 5, 11, 17, 22]
+            usd2urdf = RPO_ACTION_TO_MJCF
 
+    if torch is None:
+        raise RuntimeError("torch is required to load a TorchScript policy.")
     policy = torch.jit.load(args.load_model)
-    run_mujoco(policy, Sim2simCfg(), args.headless)
+    run_mujoco(policy, Sim2simCfg(), args.headless, args.no_video)

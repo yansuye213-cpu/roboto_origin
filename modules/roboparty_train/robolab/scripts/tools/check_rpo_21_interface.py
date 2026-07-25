@@ -27,6 +27,7 @@ RPO_RETARGET_CFG = ROBO_LAB_ROOT / "scripts/tools/retarget/config/rpo.yaml"
 RPO_BM_DIR = ROBO_LAB_ROOT / "data/motions/rpo_bm"
 RPO_LAB_DIR = ROBO_LAB_ROOT / "data/motions/rpo_lab"
 RPO_MJCF_DIR = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/mjcf"
+RPO_21_MJCF_FILES = ("rpo_21.xml", "rpo_21_terrain.xml", "rpo_21_stairs.xml")
 DEPLOY_CONFIG_DIR = REPO_ROOT / "modules/roboparty_deploy/src/inference/robots/rpo/configs"
 
 
@@ -211,17 +212,30 @@ def check_motion_data(reporter: Reporter, action_names: list[str], body_names: l
 
 
 def check_mujoco_assets(reporter: Reporter, num_joints: int):
-    for path in sorted(RPO_MJCF_DIR.glob("rpo*.xml")):
+    expected_paths = [RPO_MJCF_DIR / name for name in RPO_21_MJCF_FILES]
+    for path in expected_paths:
+        if not path.is_file():
+            reporter.error(f"{path.name}: missing 21-DoF MuJoCo XML")
+            continue
         text = path.read_text(errors="ignore")
         actuators = re.findall(r"<(?:motor|position|velocity|general)\b[^>]*\bjoint=\"([^\"]+)\"", text)
         if len(actuators) != num_joints:
-            reporter.warn(f"{path.name}: has {len(actuators)} actuators, expected {num_joints}; MuJoCo sim2sim is still legacy")
+            reporter.error(f"{path.name}: has {len(actuators)} actuators, expected {num_joints}")
         else:
             reporter.ok(f"{path.name}: actuator count matches {num_joints}")
+
+    for path in sorted(RPO_MJCF_DIR.glob("rpo*.xml")):
+        if path.name in RPO_21_MJCF_FILES:
+            continue
+        text = path.read_text(errors="ignore")
+        actuators = re.findall(r"<(?:motor|position|velocity|general)\b[^>]*\bjoint=\"([^\"]+)\"", text)
+        if len(actuators) != num_joints:
+            reporter.warn(f"{path.name}: legacy MuJoCo XML has {len(actuators)} actuators; current sim2sim uses rpo_21*.xml")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-motion-data", action="store_true", help="Validate rpo_bm npz motion files.")
     parser.add_argument("--check-lab-motions", action="store_true", help="Also validate rpo_lab pickle files.")
     args = parser.parse_args()
 
@@ -229,7 +243,10 @@ def main() -> int:
     action_names, deploy_names, _, link_names = check_robot_assets(reporter)
     check_deploy_configs(reporter, action_names, deploy_names)
     check_retarget_config(reporter, action_names)
-    check_motion_data(reporter, action_names, link_names, args.check_lab_motions)
+    if args.check_motion_data or args.check_lab_motions:
+        check_motion_data(reporter, action_names, link_names, args.check_lab_motions)
+    else:
+        reporter.warn("Skipping motion data checks; pass --check-motion-data to include rpo_bm npz files")
     check_mujoco_assets(reporter, len(action_names))
 
     print(f"\nSummary: {len(reporter.errors)} error(s), {len(reporter.warnings)} warning(s)")

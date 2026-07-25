@@ -59,14 +59,62 @@
 # Copyright (c) 2024 Beijing RobotEra TECHNOLOGY CO.,LTD. All rights reserved.
 
 import numpy as np
-import mujoco, mujoco_viewer
+import mujoco
 from tqdm import tqdm
-from scipy.spatial.transform import Rotation as R
+try:
+    from .rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
+except ImportError:
+    from rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
 from robolab.assets import ISAAC_DATA_DIR
-import torch
-import cv2
-from pynput import keyboard
-from loop_rate_limiters import RateLimiter
+import time
+
+try:
+    import mujoco_viewer
+except ImportError:
+    mujoco_viewer = None
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+
+try:
+    from loop_rate_limiters import RateLimiter
+except ImportError:
+    class RateLimiter:
+        def __init__(self, frequency, warn=False):
+            self.period = 1.0 / float(frequency)
+
+        def sleep(self):
+            time.sleep(self.period)
 
 
 class cmd:
@@ -91,28 +139,29 @@ def on_press(key):
     except AttributeError:
         pass
 
-def on_release():
+def on_release(key):
     pass
 
 def start_keyboard_listener():
+    if keyboard is None:
+        print("[WARN] pynput is not installed; keyboard controls are disabled.")
+        return None
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     return listener
 
 def get_obs(data):
-    q = data.qpos.astype(np.double)
-    dq = data.qvel.astype(np.double)
-    quat = data.sensor('orientation').data[[1, 2, 3, 0]].astype(np.double)
-    r = R.from_quat(quat)
-    v = r.apply(data.qvel[:3], inverse=True).astype(np.double)  # In the base frame
-    omega = data.sensor('angular-velocity').data.astype(np.double)
-    gvec = r.apply(np.array([0., 0., -1.]), inverse=True).astype(np.double)
-    return (q, dq, quat, v, omega, gvec)
+    return get_rpo_obs(data)
 
 def pd_control(target_q, q, kp, target_dq, dq, kd):
     return (target_q - q) * kp + (target_dq - dq) * kd
 
-def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
+def _require(module, package_name, purpose):
+    if module is None:
+        raise RuntimeError(f"{package_name} is required {purpose}.")
+    return module
+
+def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None,no_video=False):
     """
     Run the Mujoco simulation using the provided policy and configuration.
 
@@ -136,16 +185,25 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
     print("=" * 60)
     keyboard_listener = start_keyboard_listener()
 
+    if motion_file is None:
+        raise ValueError("--motion_file is required for BM sim2sim.")
     motion=np.load(motion_file)
     motion_pos=motion["body_pos_w"]
     motion_quat=motion["body_quat_w"]
     m_input_pos=motion["joint_pos"]
     m_input_vel=motion["joint_vel"]
+    if m_input_pos.shape[1] != cfg.robot_config.num_actions or m_input_vel.shape[1] != cfg.robot_config.num_actions:
+        raise ValueError(
+            f"{motion_file} has joint_pos/joint_vel dims "
+            f"{m_input_pos.shape[1]}/{m_input_vel.shape[1]}, expected {cfg.robot_config.num_actions}. "
+            "Regenerate BM motion data with the 21-DoF RPO asset."
+        )
 
     num_frames = min(m_input_pos.shape[0], m_input_vel.shape[0], motion_pos.shape[0], motion_quat.shape[0])
 
 
     model = mujoco.MjModel.from_xml_path(cfg.sim_config.mujoco_model_path)
+    assert_rpo_21_mujoco_model(model, cfg.sim_config.mujoco_model_path)
     model.opt.timestep = cfg.sim_config.dt
     model.opt.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     data = mujoco.MjData(model)
@@ -158,17 +216,20 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
     initial_qvel = data.qvel.copy()
 
     if headless:
-        renderer = mujoco.Renderer(model, width=1920, height=1080)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        cam = mujoco.MjvCamera()
-        cam.distance = 4.0      # 增加距离以获得更好的视角
-        cam.azimuth = 45.0     # 水平旋转角度
-        cam.elevation = -20.0   # 垂直俯仰角度
-        cam.lookat = [0, 0, 1]  # 观察点位置
-        out = cv2.VideoWriter('simulation.mp4', fourcc, 1.0/cfg.sim_config.dt/cfg.sim_config.decimation, (1920, 1080))
+        if not no_video:
+            cv2_mod = _require(cv2, "opencv-python", "when running headless video output")
+            renderer = mujoco.Renderer(model, width=1920, height=1080)
+            fourcc = cv2_mod.VideoWriter_fourcc(*'mp4v')
+            cam = mujoco.MjvCamera()
+            cam.distance = 4.0      # 增加距离以获得更好的视角
+            cam.azimuth = 45.0     # 水平旋转角度
+            cam.elevation = -20.0   # 垂直俯仰角度
+            cam.lookat = [0, 0, 1]  # 观察点位置
+            out = cv2_mod.VideoWriter('simulation.mp4', fourcc, 1.0/cfg.sim_config.dt/cfg.sim_config.decimation, (1920, 1080))
     else:
+        viewer_mod = _require(mujoco_viewer, "mujoco-python-viewer", "when running with the GUI viewer")
         mode = 'window'
-        viewer = mujoco_viewer.MujocoViewer(model, data, mode=mode, width=1920, height=1080)
+        viewer = viewer_mod.MujocoViewer(model, data, mode=mode, width=1920, height=1080)
         viewer.cam.distance = 4.0
         viewer.cam.azimuth = 45.0
         viewer.cam.elevation = -20.0
@@ -219,12 +280,14 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
 
             obs = np.zeros([1, cfg.robot_config.num_single_obs], dtype=np.float32)
             
-            obs[0, 0:46] = m_input
-            obs[0, 46:49] = omega
-            obs[0, 49:52] = gvec
-            obs[0, 52:75] = q_obs
-            obs[0, 75:98] = dq_obs
-            obs[0, 98:121] = action
+            num_actions = cfg.robot_config.num_actions
+            motion_dim = 2 * num_actions
+            obs[0, 0:motion_dim] = m_input
+            obs[0, motion_dim : motion_dim + 3] = omega
+            obs[0, motion_dim + 3 : motion_dim + 6] = gvec
+            obs[0, motion_dim + 6 : motion_dim + 6 + num_actions] = q_obs
+            obs[0, motion_dim + 6 + num_actions : motion_dim + 6 + 2 * num_actions] = dq_obs
+            obs[0, motion_dim + 6 + 2 * num_actions : motion_dim + 6 + 3 * num_actions] = action
 
             if is_first_frame:
                 hist_obs = np.tile(obs, (cfg.robot_config.frame_stack, 1))
@@ -233,15 +296,26 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
                 hist_obs = np.concatenate((hist_obs[1:], obs.reshape(1, -1)), axis=0)
 
             policy_input = hist_obs.reshape(1, -1).astype(np.float32)
+            if policy_input.shape[1] != cfg.robot_config.num_observations:
+                raise ValueError(
+                    f"Policy input has {policy_input.shape[1]} observations, "
+                    f"expected {cfg.robot_config.num_observations}."
+                )
             with torch.inference_mode():
-                action[:] = policy(torch.tensor(policy_input))[0].detach().numpy()
+                policy_action = policy(torch.tensor(policy_input))[0].detach().numpy()
+            if policy_action.shape[0] != cfg.robot_config.num_actions:
+                raise ValueError(
+                    f"Policy output has {policy_action.shape[0]} actions, "
+                    f"expected {cfg.robot_config.num_actions}."
+                )
+            action[:] = policy_action
 
             target_q = action * cfg.robot_config.action_scale
             for i in range(len(cfg.robot_config.usd2urdf)):
                 target_pos[cfg.robot_config.usd2urdf[i]] = target_q[i]
             target_pos = target_pos + cfg.robot_config.default_pos
 
-            if headless:
+            if headless and not no_video:
                 renderer.update_scene(data, camera=cam)
                 if cmd.camera_follow:
                     base_pos = data.qpos[0:3].tolist()
@@ -268,10 +342,12 @@ def run_mujoco(policy, cfg, headless=False,loop=False,motion_file=None):
         count_lowlevel += 1
 
     if headless:
-        out.release()
+        if not no_video:
+            out.release()
     else:
         viewer.close()
-    keyboard_listener.stop()
+    if keyboard_listener is not None:
+        keyboard_listener.stop()
     print("Simulation finished. Generating plots...")
 
 
@@ -284,6 +360,8 @@ if __name__ == '__main__':
     parser.add_argument('--terrain', action='store_true', help='terrain or plane')
     parser.add_argument('--headless', action='store_true',
                       help='Run without GUI and save video')
+    parser.add_argument('--no-video', action='store_true',
+                      help='Run headless without creating a MuJoCo renderer/video')
     parser.add_argument('--motion_file',type=str,help='path to motion file(npz)')
     parser.add_argument('--loop',action="store_true",help='loop the policy')
     args = parser.parse_args()
@@ -292,26 +370,26 @@ if __name__ == '__main__':
 
         class sim_config:
             if args.terrain:
-                # mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_terrain.xml'
-                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo.xml'
+                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_21_terrain.xml'
             else:
-                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo.xml'
+                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_21.xml'
             sim_duration = 1000.0
             dt = 0.005
             decimation = 4
 
         class robot_config:
-            kps = np.array([100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40, 150, 40, 40, 40, 30, 20, 40, 40, 40, 30, 20], dtype=np.double)
-            kds = np.array([3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 5.0, 2.0, 2.0, 2.0, 1.5, 1.0, 2.0, 2.0, 2.0, 1.5, 1.0], dtype=np.double)
-            default_pos = np.array([0, 0, -0.1, 0.3, -0.2, 0, 0, 0, -0.1, 0.3, -0.2, 0, 0, 0.18, 0.06, 0, 0.78, 0, 0.18, -0.06, 0, 0.78, 0], dtype=np.double)
-            tau_limit = 200. * np.ones(23, dtype=np.double)
+            kps = RPO_KPS
+            kds = RPO_KDS
+            default_pos = RPO_DEFAULT_POS
+            tau_limit = RPO_TAU_LIMIT
             frame_stack = 1
-            num_single_obs = 121
+            num_actions = len(RPO_ACTION_JOINT_NAMES)
+            num_single_obs = 6 + 5 * num_actions
             num_observations = num_single_obs * frame_stack
-            num_actions = 23
             action_scale = 0.25
-            # 'left_thigh_yaw_joint', 'right_thigh_yaw_joint', 'torso_joint', 'left_thigh_roll_joint', 'right_thigh_roll_joint', 'left_arm_pitch_joint', 'right_arm_pitch_joint', 'left_thigh_pitch_joint', 'right_thigh_pitch_joint', 'left_arm_roll_joint', 'right_arm_roll_joint', 'left_knee_joint', 'right_knee_joint', 'left_arm_yaw_joint', 'right_arm_yaw_joint', 'left_ankle_pitch_joint', 'right_ankle_pitch_joint', 'left_elbow_pitch_joint', 'right_elbow_pitch_joint', 'left_ankle_roll_joint', 'right_ankle_roll_joint', 'left_elbow_yaw_joint', 'right_elbow_yaw_joint'
-            usd2urdf = [0, 6, 12, 1, 7, 13, 18, 2, 8, 14, 19, 3, 9, 15, 20, 4, 10, 16, 21, 5, 11, 17, 22]
+            usd2urdf = RPO_ACTION_TO_MJCF
 
+    if torch is None:
+        raise RuntimeError("torch is required to load a TorchScript policy.")
     policy = torch.jit.load(args.load_model)
-    run_mujoco(policy, Sim2simCfg(), args.headless,args.loop,args.motion_file)
+    run_mujoco(policy, Sim2simCfg(), args.headless,args.loop,args.motion_file,args.no_video)
