@@ -83,6 +83,7 @@ def extract_gmr_data(
     gmr_dof_names: list[str],
     lab_dof_names: list[str],
     loop_mode: LoopMode,
+    dof_name_aliases: dict[str, str] | None = None,
     start_frame: int = 0,
     end_frame: int = -1,
 ):
@@ -94,6 +95,8 @@ def extract_gmr_data(
     root_pos = gmr_data['root_pos']  # Shape: (num_frames, 3)
     root_rot_quat = gmr_data['root_rot']  # Shape: (num_frames, 4), quaternion format
     dof_pos = gmr_data['dof_pos']    # Shape: (num_frames, num_dofs)
+    source_dof_names = [str(name) for name in gmr_data.get('dof_names', gmr_dof_names)]
+    dof_name_aliases = dof_name_aliases or {}
 
     # Log the type and shape of each extracted term
     print("\n" + "="*60)
@@ -114,6 +117,10 @@ def extract_gmr_data(
         
     if dof_pos.ndim != 2:
         raise ValueError(f"Expected dof_pos to be 2D array, got {dof_pos.ndim}D")
+    if len(source_dof_names) != dof_pos.shape[1]:
+        raise ValueError(
+            f"Expected {len(source_dof_names)} source DOF names, but dof_pos has {dof_pos.shape[1]} columns."
+        )
     
     num_frames = dof_pos.shape[0]
     if end_frame == -1 or end_frame > num_frames:
@@ -123,11 +130,14 @@ def extract_gmr_data(
     # Get the mapping indices from GMR to Isaac Lab
     gmr_to_lab_indices = []
     for lab_dof in lab_dof_names:
-        if lab_dof in gmr_dof_names:
-            gmr_index = gmr_dof_names.index(lab_dof)
+        source_dof = lab_dof if lab_dof in source_dof_names else dof_name_aliases.get(lab_dof, lab_dof)
+        if source_dof in source_dof_names:
+            gmr_index = source_dof_names.index(source_dof)
             gmr_to_lab_indices.append(gmr_index)
         else:
-            raise ValueError(f"DOF name '{lab_dof}' not found in GMR DOF names.")
+            raise ValueError(
+                f"DOF name '{lab_dof}' not found in source DOF names, and alias '{source_dof}' is missing."
+            )
 
     dof_pos_lab = dof_pos[:, gmr_to_lab_indices]
 
@@ -151,7 +161,8 @@ def run_simulator(
         sim: sim_utils.SimulationContext, 
         scene: InteractiveScene, 
         motion_data_dicts: list[dict[str, np.ndarray]], 
-        key_body_names: list[str]):
+        key_body_names: list[str],
+        lab_dof_names: list[str] | None = None):
     
     robot: Articulation = scene["robot"]
     # marker
@@ -202,6 +213,21 @@ def run_simulator(
         torch.zeros((num_frames, len(key_body_indices), 3), device=scene.device) 
         for num_frames in num_frames_list
     ]
+
+    joint_indices = None
+    if lab_dof_names is not None:
+        joint_indices, joint_names = robot.find_joints(lab_dof_names, preserve_order=True)
+        if list(joint_names) != lab_dof_names:
+            raise RuntimeError(
+                "Lab motion joints do not match the robot joint order.\n"
+                f"Expected: {lab_dof_names}\n"
+                f"Actual:   {joint_names}"
+            )
+        for motion_data in motion_data_dicts:
+            if motion_data["dof_pos"].shape[1] != len(joint_indices):
+                raise ValueError(
+                    f"Motion has {motion_data['dof_pos'].shape[1]} DoFs, expected {len(joint_indices)}."
+                )
     
     count = 0
     sim_time = 0.0
@@ -225,7 +251,10 @@ def run_simulator(
             root_states[motion_idx, 10:13] = 0.0  # zero angular velocity
             
             # set joint state 
-            joint_pos[motion_idx, :] = dof_pos_list[motion_idx][frame_idx, :]
+            if joint_indices is None:
+                joint_pos[motion_idx, :] = dof_pos_list[motion_idx][frame_idx, :]
+            else:
+                joint_pos[motion_idx, joint_indices] = dof_pos_list[motion_idx][frame_idx, :]
             
         robot.write_root_state_to_sim(root_states)
         robot.write_joint_state_to_sim(joint_pos, joint_vel)

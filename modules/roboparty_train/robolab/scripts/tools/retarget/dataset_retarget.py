@@ -138,6 +138,7 @@ def main():
     gmr_dof_names = config['gmr_dof_names']
     lab_dof_names = config['lab_dof_names']
     lab_key_body_names = config['lab_key_body_names']
+    dof_name_aliases = config.get('dof_name_aliases', {})
 
     loop_mode = LoopMode.CLAMP if args_cli.loop == "clamp" else LoopMode.WRAP
 
@@ -161,6 +162,7 @@ def main():
             gmr_dof_names=gmr_dof_names,
             lab_dof_names=lab_dof_names,
             loop_mode=loop_mode,
+            dof_name_aliases=dof_name_aliases,
             start_frame=0,
             end_frame=-1,
         )
@@ -191,7 +193,9 @@ def main():
     print("Simulation starting ...")
 
     # run simulator with all motions
-    motion_data_dicts = run_simulator(simulation_app, sim, scene, motion_data_dicts, lab_key_body_names)
+    motion_data_dicts = run_simulator(
+        simulation_app, sim, scene, motion_data_dicts, lab_key_body_names, lab_dof_names
+    )
 
     # save outputs
     print("Saving converted motions to output directory...")

@@ -86,7 +86,7 @@ import torch
 ##
 # Pre-defined configs
 ##
-from robolab.assets.robots import RPO_CFG
+from robolab.assets.robots import RPO_ACTION_JOINT_NAMES, RPO_CFG
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -95,6 +95,56 @@ from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import axis_angle_from_quat, quat_conjugate, quat_mul, quat_slerp
+
+RPO_LEGACY_23_JOINT_NAMES = [
+    "left_thigh_yaw_joint",
+    "left_thigh_roll_joint",
+    "left_thigh_pitch_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_thigh_yaw_joint",
+    "right_thigh_roll_joint",
+    "right_thigh_pitch_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "torso_joint",
+    "left_arm_pitch_joint",
+    "left_arm_roll_joint",
+    "left_arm_yaw_joint",
+    "left_elbow_pitch_joint",
+    "left_elbow_yaw_joint",
+    "right_arm_pitch_joint",
+    "right_arm_roll_joint",
+    "right_arm_yaw_joint",
+    "right_elbow_pitch_joint",
+    "right_elbow_yaw_joint",
+]
+
+RPO_LEGACY_23_NAME_ALIASES = {
+    "head_yaw_joint": "torso_joint",
+    "left_leg_pitch_joint": "left_thigh_pitch_joint",
+    "right_leg_pitch_joint": "right_thigh_pitch_joint",
+    "left_leg_roll_joint": "left_thigh_roll_joint",
+    "right_leg_roll_joint": "right_thigh_roll_joint",
+    "left_leg_yaw_joint": "left_thigh_yaw_joint",
+    "right_leg_yaw_joint": "right_thigh_yaw_joint",
+    "left_shoulder_pitch_joint": "left_arm_pitch_joint",
+    "right_shoulder_pitch_joint": "right_arm_pitch_joint",
+    "left_shoulder_roll_joint": "left_arm_roll_joint",
+    "right_shoulder_roll_joint": "right_arm_roll_joint",
+    "left_shoulder_yaw_joint": "left_arm_yaw_joint",
+    "right_shoulder_yaw_joint": "right_arm_yaw_joint",
+}
+
+
+def _legacy_23_to_action_indices() -> list[int]:
+    indices = []
+    for joint_name in RPO_ACTION_JOINT_NAMES:
+        legacy_name = RPO_LEGACY_23_NAME_ALIASES.get(joint_name, joint_name)
+        indices.append(RPO_LEGACY_23_JOINT_NAMES.index(legacy_name))
+    return indices
 
 
 @configclass
@@ -156,6 +206,14 @@ class MotionLoader:
         self.motion_base_rots_input = motion[:, 3:7]
         self.motion_base_rots_input = self.motion_base_rots_input[:, [3, 0, 1, 2]]  # convert to wxyz
         self.motion_dof_poss_input = motion[:, 7:]
+        if self.motion_dof_poss_input.shape[1] == len(RPO_LEGACY_23_JOINT_NAMES):
+            self.motion_dof_poss_input = self.motion_dof_poss_input[:, _legacy_23_to_action_indices()]
+            print("[INFO]: Converted legacy 23-DoF CSV joints to 21-DoF RPO action order.")
+        elif self.motion_dof_poss_input.shape[1] != len(RPO_ACTION_JOINT_NAMES):
+            raise ValueError(
+                f"Expected {len(RPO_ACTION_JOINT_NAMES)} or {len(RPO_LEGACY_23_JOINT_NAMES)} DoF columns after the root pose, "
+                f"got {self.motion_dof_poss_input.shape[1]} in {self.motion_file}."
+            )
 
         self.input_frames = motion.shape[0]
         self.duration = (self.input_frames - 1) * self.input_dt
@@ -267,32 +325,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
 
     # Extract scene entities
     robot = scene["robot"]
-    joint_sdk_names = [
-        'left_thigh_yaw_joint', 
-        'left_thigh_roll_joint', 
-        'left_thigh_pitch_joint', 
-        'left_knee_joint', 
-        'left_ankle_pitch_joint', 
-        'left_ankle_roll_joint', 
-        'right_thigh_yaw_joint', 
-        'right_thigh_roll_joint', 
-        'right_thigh_pitch_joint', 
-        'right_knee_joint', 
-        'right_ankle_pitch_joint', 
-        'right_ankle_roll_joint',
-        'torso_joint', 
-        'left_arm_pitch_joint', 
-        'left_arm_roll_joint', 
-        'left_arm_yaw_joint', 
-        'left_elbow_pitch_joint', 
-        'left_elbow_yaw_joint', 
-        'right_arm_pitch_joint', 
-        'right_arm_roll_joint', 
-        'right_arm_yaw_joint', 
-        'right_elbow_pitch_joint', 
-        'right_elbow_yaw_joint'
-    ]
-    robot_joint_indexes = robot.find_joints(joint_sdk_names, preserve_order=True)[0]
+    robot_joint_indexes = robot.find_joints(RPO_ACTION_JOINT_NAMES, preserve_order=True)[0]
 
     # ------- data logger -------------------------------------------------------
     log = {
@@ -343,8 +376,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         sim.set_camera_view(pos_lookat + np.array([2.0, 2.0, 0.5]), pos_lookat)
 
         if not file_saved:
-            log["joint_pos"].append(robot.data.joint_pos[0, :].cpu().numpy().copy())
-            log["joint_vel"].append(robot.data.joint_vel[0, :].cpu().numpy().copy())
+            log["joint_pos"].append(robot.data.joint_pos[0, robot_joint_indexes].cpu().numpy().copy())
+            log["joint_vel"].append(robot.data.joint_vel[0, robot_joint_indexes].cpu().numpy().copy())
             log["body_pos_w"].append(robot.data.body_pos_w[0, :].cpu().numpy().copy())
             log["body_quat_w"].append(robot.data.body_quat_w[0, :].cpu().numpy().copy())
             log["body_lin_vel_w"].append(robot.data.body_lin_vel_w[0, :].cpu().numpy().copy())
