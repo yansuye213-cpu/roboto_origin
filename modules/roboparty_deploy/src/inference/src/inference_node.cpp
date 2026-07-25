@@ -51,10 +51,14 @@ void InferenceNode::update_stacked_obs(std::vector<float>& input_buffer, const s
     }
 }
 
-void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size){
+bool InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx,
+                                std::string model_path,
+                                int input_size,
+                                std::string& disabled_reason) {
     if (!ctx) {
         ctx = std::make_unique<ModelContext>();
     }
+    disabled_reason.clear();
 
     Ort::SessionOptions session_options;
     session_options.DisablePerSessionThreads();
@@ -83,9 +87,12 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         model_input_size *= static_cast<size_t>(ctx->input_shape[i]);
     }
     if (model_input_size != static_cast<size_t>(input_size)) {
-        throw std::runtime_error(
-            "ONNX input size mismatch for " + model_path + ": model expects " +
-            std::to_string(model_input_size) + " values, but config provides " + std::to_string(input_size));
+        disabled_reason =
+            "ONNX input size mismatch: model expects " +
+            std::to_string(model_input_size) + " values, config provides " +
+            std::to_string(input_size);
+        ctx.reset();
+        return false;
     }
     ctx->input_buffer.resize(input_size);
 
@@ -114,10 +121,12 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         model_output_size *= static_cast<size_t>(ctx->output_shape[i]);
     }
     if (model_output_size != usd2urdf_.size()) {
-        throw std::runtime_error(
-            "ONNX output size mismatch for " + model_path + ": model provides " +
-            std::to_string(model_output_size) + " actions, but usd2urdf maps " +
-            std::to_string(usd2urdf_.size()) + " actions");
+        disabled_reason =
+            "ONNX output size mismatch: model provides " +
+            std::to_string(model_output_size) + " actions, usd2urdf maps " +
+            std::to_string(usd2urdf_.size()) + " actions";
+        ctx.reset();
+        return false;
     }
     ctx->output_buffer.resize(model_output_size);
 
@@ -137,6 +146,7 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         
     ctx->output_tensor = std::make_unique<Ort::Value>(Ort::Value::CreateTensor<float>(
         *ctx->memory_info, ctx->output_buffer.data(), ctx->output_buffer.size(), ctx->output_shape.data(), ctx->output_shape.size()));
+    return true;
 }
 
 void InferenceNode::reset_runtime_state() {
@@ -434,6 +444,16 @@ void InferenceNode::inference() {
                 continue;
             }
             auto& policy = active_policy();
+            if (!policy.inference_enabled || !policy.ctx) {
+                RCLCPP_ERROR_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 1000,
+                    "Active policy %s is disabled: %s",
+                    policy.name.c_str(), policy.disabled_reason.c_str());
+                is_running_.store(false);
+                mode_lock.unlock();
+                std::this_thread::sleep_for(period);
+                continue;
+            }
             update_obs_segments(policy.obs_segments, policy.obs_layout);
             publish_imu();
             publish_joint_states();

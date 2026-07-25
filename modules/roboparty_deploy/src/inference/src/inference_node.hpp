@@ -91,6 +91,8 @@ class InferenceNode : public rclcpp::Node {
         std::shared_ptr<MotionLoader> motion_loader;
         size_t motion_frame = 0;
         bool is_first_frame = true;
+        bool inference_enabled = true;
+        std::string disabled_reason;
     };
 
     InferenceNode() : Node("inference_node") {
@@ -126,8 +128,17 @@ class InferenceNode : public rclcpp::Node {
                     throw std::runtime_error("Motion joint count mismatch: " + policy.motion_path);
                 }
             }
-            setup_model(policy.ctx, policy.model_path,
-                        policy.obs_num * policy.frame_stack + policy.extra_obs_num);
+            policy.inference_enabled =
+                setup_model(policy.ctx, policy.model_path,
+                            policy.obs_num * policy.frame_stack +
+                                policy.extra_obs_num,
+                            policy.disabled_reason);
+            if (!policy.inference_enabled) {
+                RCLCPP_WARN(this->get_logger(),
+                            "Policy disabled: %s (%s). Stand mode remains available.",
+                            policy.name.c_str(),
+                            policy.disabled_reason.c_str());
+            }
         }
         initialize_runtime_state();
         reset_runtime_state();
@@ -248,7 +259,8 @@ class InferenceNode : public rclcpp::Node {
     const PolicyRuntime& active_policy() const;
 
     void load_config();
-    void setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size);
+    bool setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path,
+                     int input_size, std::string& disabled_reason);
 
     // Policy/model runtime helpers.
     void initialize_runtime_state();

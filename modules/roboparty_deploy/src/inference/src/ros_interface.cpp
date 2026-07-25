@@ -860,6 +860,15 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         }
     }
     if (msg->buttons[kButtonB] == 1 && msg->buttons[kButtonB] != last_button2_) {
+        if (!is_running_.load() && control_mode_ == ControlMode::Policy &&
+            (!active_policy().inference_enabled || !active_policy().ctx)) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Cannot start policy mode: policy %s is disabled: %s. Use LSB for stand mode.",
+                        active_policy().name.c_str(),
+                        active_policy().disabled_reason.c_str());
+            last_button2_ = msg->buttons[kButtonB];
+            return;
+        }
         is_running_.store(!is_running_.load());
         RCLCPP_INFO(this->get_logger(), "Control %s", is_running_.load() ? "started" : "paused");
     }
@@ -1134,6 +1143,13 @@ void InferenceNode::start_inference_srv(const std::shared_ptr<std_srvs::srv::Tri
     if (is_running_.load()) {
         response->success = false;
         response->message = "Inference is already running!";
+        return;
+    }
+    if (control_mode_ == ControlMode::Policy &&
+        (!active_policy().inference_enabled || !active_policy().ctx)) {
+        response->success = false;
+        response->message =
+            "Active policy is disabled: " + active_policy().disabled_reason;
         return;
     }
     is_running_.store(true);
