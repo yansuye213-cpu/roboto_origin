@@ -4,7 +4,7 @@ import os
 from isaaclab.utils import configclass
 
 from robolab import ROBOLAB_ROOT_DIR
-from robolab.assets.robots.roboparty import RPO_CFG, RPO_LINKS
+from robolab.assets.robots.roboparty import RPO_ACTION_JOINT_NAMES, RPO_CFG, RPO_LINKS, RPO_NUM_ACTIONS
 from robolab.sensors import get_link_prim_targets
 from robolab.tasks.manager_based.parkour.parkour_env_cfg import ROUGH_TERRAINS_CFG, ParkourEnvCfg
 
@@ -29,6 +29,7 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
         self.motion_data.motion_dataset.motion_data_dir = os.path.join(
             ROBOLAB_ROOT_DIR, "data", "motions", "rpo_lab"
         )
+        self.motion_data.motion_dataset.expected_num_dofs = RPO_NUM_ACTIONS
         self.motion_data.motion_dataset.motion_data_weights = {
             "36_01": 1,
             "36_11": 1,
@@ -44,6 +45,7 @@ class RPOParkourRoughEnvCfg(ParkourEnvCfg):
             "turn_r": 1,
         }
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
+        self.animation.animation.joint_names = RPO_ACTION_JOINT_NAMES
         self.observations.disc.history_length = AMP_NUM_STEPS
 
 

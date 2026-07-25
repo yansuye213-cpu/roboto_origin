@@ -44,6 +44,9 @@ class AnimationTermCfg:
     
     motion_data_components: list[str] = MISSING
     """The components of the motion data to use for this animation term."""
+
+    joint_names: list[str] | None = None
+    """Joint order used by dof_pos/dof_vel components. If unset, robot internal order is used."""
     
     num_steps_to_use: int = 1
     """Number of steps of motion data to extract from the motion data term.

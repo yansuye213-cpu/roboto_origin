@@ -42,6 +42,7 @@ from __future__ import annotations
 import torch
 from tensordict import TensorDict
 from typing import TYPE_CHECKING
+from robolab.assets.robots import RPO_ACTION_MIRROR_INDICES, RPO_ACTION_MIRROR_SIGNS, RPO_NUM_ACTIONS
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -186,7 +187,7 @@ def _apply_xyz_sign(obs: torch.Tensor, signs: list[int]) -> torch.Tensor:
 
 def _switch_joints_left_right_flat(joint_data: torch.Tensor) -> torch.Tensor:
     joint_data_shape = joint_data.shape
-    joint_data = joint_data.reshape(*joint_data_shape[:-1], -1, 23)
+    joint_data = joint_data.reshape(*joint_data_shape[:-1], -1, RPO_NUM_ACTIONS)
     joint_data = _switch_joints_left_right(joint_data)
     return joint_data.reshape(joint_data_shape)
 
@@ -215,47 +216,8 @@ def _transform_actions_left_right(actions: torch.Tensor) -> torch.Tensor:
     return actions
 
 
-"""
-Helper functions for symmetry.
-
-In Isaac Sim, the joint ordering is as follows:
-[           
-'left_thigh_yaw_joint',   #0
-'right_thigh_yaw_joint',  #1
-'torso_joint',            #2
-'left_thigh_roll_joint',  #3
-'right_thigh_roll_joint', #4
-'left_arm_pitch_joint',   #5
-'right_arm_pitch_joint',  #6
-'left_thigh_pitch_joint', #7
-'right_thigh_pitch_joint',#8
-'left_arm_roll_joint',    #9
-'right_arm_roll_joint',   #10
-'left_knee_joint',        #11
-'right_knee_joint',       #12
-'left_arm_yaw_joint',     #13
-'right_arm_yaw_joint',    #14
-'left_ankle_pitch_joint', #15
-'right_ankle_pitch_joint',#16
-'left_elbow_pitch_joint', #17
-'right_elbow_pitch_joint',#18
-'left_ankle_roll_joint',  #19
-'right_ankle_roll_joint', #20
-'left_elbow_yaw_joint',   #21
-'right_elbow_yaw_joint'   #22
-]
-
-"""
-
-
 def _switch_joints_left_right(joint_data: torch.Tensor) -> torch.Tensor:
     """Applies a left-right symmetry transformation to the joint data tensor."""
-    joint_data_switched = joint_data.clone()
-    # left <-- right
-    joint_data_switched[..., [0, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]] = joint_data[..., [1, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]]
-    # right <-- left
-    joint_data_switched[..., [1, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]] = joint_data[..., [0, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]]
-    
-    joint_data_switched[..., [0,1,2,3,4,9,10,13,14,19,20,21,22]] = -1 * joint_data_switched[..., [0,1,2,3,4,9,10,13,14,19,20,21,22]]
-
-    return joint_data_switched
+    indices = torch.tensor(RPO_ACTION_MIRROR_INDICES, device=joint_data.device)
+    signs = torch.tensor(RPO_ACTION_MIRROR_SIGNS, device=joint_data.device, dtype=joint_data.dtype)
+    return joint_data.index_select(-1, indices) * signs

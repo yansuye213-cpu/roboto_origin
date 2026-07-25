@@ -37,6 +37,7 @@ from robolab.utils.noise import (
     StereoFusionNoiseCfg,
 )
 from robolab.tasks.manager_based.parkour.terrain_generator_cfg import ROUGH_TERRAINS_CFG
+from robolab.assets.robots import RPO_ACTION_JOINT_NAMES
 
 __file_dir__ = os.path.dirname(os.path.realpath(__file__))
 
@@ -46,9 +47,19 @@ KEY_BODY_NAMES = [
     "right_ankle_roll_link",
     "left_knee_link",
     "right_knee_link",
-    "left_elbow_yaw_link",
-    "right_elbow_yaw_link"
+    "left_elbow_pitch_link",
+    "right_elbow_pitch_link"
 ]
+
+
+def _ordered_joint_asset_cfg() -> SceneEntityCfg:
+    return SceneEntityCfg("robot", joint_names=RPO_ACTION_JOINT_NAMES, preserve_order=True)
+
+
+def _apply_ordered_joint_observations(observations):
+    for group in (observations.policy, observations.critic, observations.disc):
+        group.joint_pos.params = {"asset_cfg": _ordered_joint_asset_cfg()}
+        group.joint_vel.params = {"asset_cfg": _ordered_joint_asset_cfg()}
 
 # Shared with leg_volume_points and volume_points_penetration reward (same object so shoe / cfg edits stay in sync).
 LEG_VOLUME_POINTS_GRID = Grid3dPointsGeneratorCfg(
@@ -135,7 +146,7 @@ class SceneCfg(InteractiveSceneCfg):
         debug_vis=False,
     )
     camera = NoisyGroupedRayCasterCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+        prim_path="{ENV_REGEX_NS}/Robot/base_link",
         mesh_prim_paths=[
             "/World/ground",
             # NOTE: Don't forget to add the robot links in robot-specific configuration file.
@@ -225,7 +236,7 @@ class SceneCfg(InteractiveSceneCfg):
     )
     # sensors
     height_scanner = RayCasterCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/torso_link",
+        prim_path="{ENV_REGEX_NS}/Robot/base_link",
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 5.0)),
         ray_alignment="yaw",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[2.0, 1.0]),
@@ -427,7 +438,7 @@ class ActionsCfg:
     """Action specifications for the MDP."""
 
     joint_pos = mdp.JointPositionActionCfg(
-        asset_name="robot", joint_names=[".*"], scale=0.25, use_default_offset=True
+        asset_name="robot", joint_names=RPO_ACTION_JOINT_NAMES, scale=0.25, use_default_offset=True
     )
 
 
@@ -519,7 +530,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
-                joint_names=[".*_arm_.*_joint", ".*_elbow_.*_joint", "torso_joint"],
+                joint_names=[".*_shoulder_.*_joint", ".*_elbow_.*_joint", "head_yaw_joint"],
             )
         },
     )
@@ -528,7 +539,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
         weight=-0.8,
         params={
             "asset_cfg": SceneEntityCfg(
-                "robot", joint_names=["torso_joint"]
+                "robot", joint_names=["head_yaw_joint"]
             ),
         },
     )
@@ -552,7 +563,7 @@ class ParkourRewardsCfg(MultiRewardCfg):
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-3.0)
     pelvis_orientation_l2 = RewTerm(
-        func=mdp.link_orientation, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot", body_names="torso_link")},
+        func=mdp.link_orientation, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
     )
     feet_flat_ori = RewTerm(
         func=mdp.feet_orientation_contact,
@@ -640,7 +651,7 @@ class TerminationsCfg:
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={
-            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="torso_link"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"),
             "threshold": 1.0,
         },
     )
@@ -679,7 +690,7 @@ class EventCfg:
         func=mdp.randomize_rigid_body_com,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["torso_link", "base_link"]),
+            "asset_cfg": SceneEntityCfg("robot", body_names=["head_yaw_link", "base_link"]),
             "com_range": {"x": (-0.02, 0.02), "y": (-0.02, 0.02), "z": (-0.02, 0.02)},
         },
     )
@@ -879,6 +890,7 @@ class ParkourEnvCfg(AmpEnvCfg):
         self.sim.physics_material = self.scene.terrain.physics_material
         self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
         self.sim.physx.gpu_collision_stack_size = 2**29
+        _apply_ordered_joint_observations(self.observations)
         # update sensor update periods
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt

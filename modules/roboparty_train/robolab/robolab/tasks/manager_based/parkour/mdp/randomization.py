@@ -19,6 +19,32 @@ if TYPE_CHECKING:
     from robolab.sensors.grouped_ray_caster import GroupedRayCasterCamera
 
 
+def _sync_joint_position_action_offset(env: ManagerBasedEnv, asset: Articulation):
+    action_term = env.action_manager.get_term("joint_pos")
+    if not hasattr(action_term, "_offset"):
+        return
+
+    action_joint_ids = getattr(action_term, "_joint_ids", None)
+    if action_joint_ids is None:
+        action_joint_ids = getattr(action_term, "joint_ids", None)
+
+    if action_joint_ids is None or isinstance(action_joint_ids, slice):
+        offset = asset.data.default_joint_pos
+    else:
+        if torch.is_tensor(action_joint_ids):
+            action_joint_ids = action_joint_ids.to(device=asset.device, dtype=torch.long)
+        else:
+            action_joint_ids = torch.tensor(action_joint_ids, dtype=torch.long, device=asset.device)
+        offset = asset.data.default_joint_pos[:, action_joint_ids]
+
+    if action_term._offset.shape != offset.shape:
+        raise RuntimeError(
+            f"joint_pos action offset shape {action_term._offset.shape} does not match default joint positions "
+            f"in action order {offset.shape}."
+        )
+    action_term._offset[:] = offset
+
+
 def randomize_default_joint_pos(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor | None,
@@ -52,11 +78,9 @@ def randomize_default_joint_pos(
             pos, offset_distribution_params, env_ids, joint_ids, operation=operation, distribution=distribution
         )[env_ids][:, joint_ids]
 
-        if env_ids != slice(None) and joint_ids != slice(None):
-            env_ids = env_ids[:, None]  # type: ignore
-        asset.data.default_joint_pos[env_ids, joint_ids] = pos
-        # update the offset in action since it is not updated automatically
-        env.action_manager.get_term("joint_pos")._offset[env_ids, joint_ids] = pos
+        env_id_sel = env_ids[:, None] if not isinstance(joint_ids, slice) else env_ids
+        asset.data.default_joint_pos[env_id_sel, joint_ids] = pos
+        _sync_joint_position_action_offset(env, asset)
 
 
 def randomize_ray_offsets(

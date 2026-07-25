@@ -32,22 +32,33 @@
 
 import os
 
-from robolab.assets.robots import RPO_CFG
+from robolab.assets.robots import RPO_ACTION_JOINT_NAMES, RPO_CFG
 from robolab.tasks.manager_based.beyondmimic.beyondmimic_env_cfg import BeyondMimicEnvCfg
 
 from isaaclab.utils import configclass
 from robolab import ROBOLAB_ROOT_DIR
+from isaaclab.managers import SceneEntityCfg
 
 s_body_name=[
-    'left_thigh_yaw_link', 
-    'right_thigh_yaw_link', 
-    'left_knee_link', 
-    'right_knee_link', 
-    'left_elbow_yaw_link', 
-    'right_elbow_yaw_link',
-    'left_ankle_pitch_link', 
+    'left_leg_yaw_link',
+    'right_leg_yaw_link',
+    'left_knee_link',
+    'right_knee_link',
+    'left_elbow_pitch_link',
+    'right_elbow_pitch_link',
+    'left_ankle_pitch_link',
     'right_ankle_pitch_link',
 ]
+
+
+def _ordered_joint_asset_cfg() -> SceneEntityCfg:
+    return SceneEntityCfg("robot", joint_names=RPO_ACTION_JOINT_NAMES, preserve_order=True)
+
+
+def _apply_ordered_joint_observations(observations):
+    for group in (observations.policy, observations.critic):
+        group.joint_pos.params = {"asset_cfg": _ordered_joint_asset_cfg()}
+        group.joint_vel.params = {"asset_cfg": _ordered_joint_asset_cfg()}
 
 @configclass
 class RPOBeyondMimicEnvCfg(BeyondMimicEnvCfg):
@@ -55,34 +66,38 @@ class RPOBeyondMimicEnvCfg(BeyondMimicEnvCfg):
         super().__post_init__()
 
         self.scene.robot = RPO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.actions.joint_pos.joint_names = RPO_ACTION_JOINT_NAMES
+        _apply_ordered_joint_observations(self.observations)
+        self.commands.motion.joint_names = RPO_ACTION_JOINT_NAMES
         self.commands.motion.motion_file = os.path.join(
             ROBOLAB_ROOT_DIR, "data", "motions", "rpo_bm", "yundong1.npz"
         )
-        self.commands.motion.anchor_body_name = "torso_link"
+        self.commands.motion.anchor_body_name = "base_link"
         self.commands.motion.body_names = [
-            'left_thigh_yaw_link', 
-            'right_thigh_yaw_link', 
-            'torso_link', 
-            'left_thigh_roll_link', 
-            'right_thigh_roll_link', 
-            'left_arm_pitch_link', 
-            'right_arm_pitch_link', 
-            'left_thigh_pitch_link', 
-            'right_thigh_pitch_link', 
-            'left_arm_roll_link', 
-            'right_arm_roll_link', 
-            'left_knee_link', 
-            'right_knee_link', 
-            'left_arm_yaw_link', 
-            'right_arm_yaw_link', 
-            'left_ankle_pitch_link', 
-            'right_ankle_pitch_link', 
-            'left_elbow_pitch_link', 
-            'right_elbow_pitch_link', 
-            'left_ankle_roll_link', 
-            'right_ankle_roll_link', 
-            'left_elbow_yaw_link', 
-            'right_elbow_yaw_link',
+            'left_leg_pitch_link',
+            'right_leg_pitch_link',
+            'base_link',
+            'head_yaw_link',
+            'left_leg_roll_link',
+            'right_leg_roll_link',
+            'left_shoulder_pitch_link',
+            'right_shoulder_pitch_link',
+            'left_leg_yaw_link',
+            'right_leg_yaw_link',
+            'left_shoulder_roll_link',
+            'right_shoulder_roll_link',
+            'left_knee_link',
+            'right_knee_link',
+            'left_shoulder_yaw_link',
+            'right_shoulder_yaw_link',
+            'left_ankle_pitch_link',
+            'right_ankle_pitch_link',
+            'left_elbow_pitch_link',
+            'right_elbow_pitch_link',
+            'left_ankle_roll_link',
+            'right_ankle_roll_link',
         ]
+        self.events.add_base_mass.params["asset_cfg"].body_names = "base_link"
+        self.events.base_com.params["asset_cfg"].body_names = ["head_yaw_link", "base_link"]
 
         self.episode_length_s = 20.0
