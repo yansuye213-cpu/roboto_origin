@@ -66,7 +66,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_thigh_pitch_link.STL" />
+          filename="../meshes/left_leg_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -80,7 +80,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_thigh_pitch_link.STL" />
+          filename="../meshes/left_leg_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -124,7 +124,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_thigh_roll_link.STL" />
+          filename="../meshes/left_leg_roll_joint.STL" />
       </geometry>
       <material
         name="">
@@ -138,7 +138,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_thigh_roll_link.STL" />
+          filename="../meshes/left_leg_roll_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -182,7 +182,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_thigh_yaw_link.STL" />
+          filename="../meshes/left_leg_yaw_joint.STL" />
       </geometry>
       <material
         name="">
@@ -196,7 +196,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_thigh_yaw_link.STL" />
+          filename="../meshes/left_leg_yaw_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -240,7 +240,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_knee_link.STL" />
+          filename="../meshes/left_knee_joint.STL" />
       </geometry>
       <material
         name="">
@@ -254,7 +254,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_knee_link.STL" />
+          filename="../meshes/left_knee_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -298,7 +298,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_ankle_pitch_link.STL" />
+          filename="../meshes/left_ankle_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -312,7 +312,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_ankle_pitch_link.STL" />
+          filename="../meshes/left_ankle_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -356,7 +356,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_ankle_roll_link.STL" />
+          filename="../meshes/left_ankle_roll_joint.STL" />
       </geometry>
       <material
         name="">
@@ -370,7 +370,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_ankle_roll_link.STL" />
+          filename="../meshes/left_ankle_roll_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -414,7 +414,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_thigh_pitch_link.STL" />
+          filename="../meshes/right_leg_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -428,7 +428,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_thigh_pitch_link.STL" />
+          filename="../meshes/right_leg_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -472,7 +472,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_thigh_roll_link.STL" />
+          filename="../meshes/right_leg_roll_joint.STL" />
       </geometry>
       <material
         name="">
@@ -486,7 +486,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_thigh_roll_link.STL" />
+          filename="../meshes/right_leg_roll_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -530,7 +530,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_thigh_yaw_link.STL" />
+          filename="../meshes/right_leg_yaw_joint.STL" />
       </geometry>
       <material
         name="">
@@ -544,7 +544,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_thigh_yaw_link.STL" />
+          filename="../meshes/right_leg_yaw_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -588,7 +588,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_knee_link.STL" />
+          filename="../meshes/right_knee_joint.STL" />
       </geometry>
       <material
         name="">
@@ -602,7 +602,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_knee_link.STL" />
+          filename="../meshes/right_knee_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -646,7 +646,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_ankle_pitch_link.STL" />
+          filename="../meshes/right_ankle_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -660,7 +660,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_ankle_pitch_link.STL" />
+          filename="../meshes/right_ankle_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -704,7 +704,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_ankle_roll_link.STL" />
+          filename="../meshes/right_ankle_roll_joint.STL" />
       </geometry>
       <material
         name="">
@@ -718,7 +718,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_ankle_roll_link.STL" />
+          filename="../meshes/right_ankle_roll_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -762,7 +762,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_arm_pitch_link.STL" />
+          filename="../meshes/left_shoulder_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -776,7 +776,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_arm_pitch_link.STL" />
+          filename="../meshes/left_shoulder_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -820,7 +820,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_arm_roll_link.STL" />
+          filename="../meshes/left_shoulder_roll_joint.STL" />
       </geometry>
       <material
         name="">
@@ -834,7 +834,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_arm_roll_link.STL" />
+          filename="../meshes/left_shoulder_roll_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -878,7 +878,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_arm_yaw_link.STL" />
+          filename="../meshes/left_shoulder_yaw_joint.STL" />
       </geometry>
       <material
         name="">
@@ -892,7 +892,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_arm_yaw_link.STL" />
+          filename="../meshes/left_shoulder_yaw_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -936,7 +936,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_elbow_pitch_link.STL" />
+          filename="../meshes/left_elbow_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -950,7 +950,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/left_elbow_pitch_link.STL" />
+          filename="../meshes/left_elbow_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -994,7 +994,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_arm_pitch_link.STL" />
+          filename="../meshes/right_shoulder_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -1008,7 +1008,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_arm_pitch_link.STL" />
+          filename="../meshes/right_shoulder_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -1052,7 +1052,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_arm_roll_link.STL" />
+          filename="../meshes/right_shoulder_roll_joint.STL" />
       </geometry>
       <material
         name="">
@@ -1066,7 +1066,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_arm_roll_link.STL" />
+          filename="../meshes/right_shoulder_roll_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -1110,7 +1110,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_arm_yaw_link.STL" />
+          filename="../meshes/right_shoulder_yaw_joint.STL" />
       </geometry>
       <material
         name="">
@@ -1124,7 +1124,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_arm_yaw_link.STL" />
+          filename="../meshes/right_shoulder_yaw_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -1168,7 +1168,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_elbow_pitch_link.STL" />
+          filename="../meshes/right_elbow_pitch_joint.STL" />
       </geometry>
       <material
         name="">
@@ -1182,7 +1182,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/right_elbow_pitch_link.STL" />
+          filename="../meshes/right_elbow_pitch_joint.STL" />
       </geometry>
     </collision>
   </link>
@@ -1226,7 +1226,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/torso_link.STL" />
+          filename="../meshes/head_yaw_joint.STL" />
       </geometry>
       <material
         name="">
@@ -1240,7 +1240,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="../meshes/torso_link.STL" />
+          filename="../meshes/head_yaw_joint.STL" />
       </geometry>
     </collision>
   </link>
