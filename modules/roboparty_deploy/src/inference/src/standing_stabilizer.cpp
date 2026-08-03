@@ -43,6 +43,14 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.wbc_mpc_max_angular_accel < 0.0f ||
         config_.wbc_mpc_max_com_accel < 0.0f ||
         config_.wbc_mpc_max_contact_force_delta < 0.0f ||
+        !std::isfinite(config_.wbc_mpc_output_roll_sign) ||
+        !std::isfinite(config_.wbc_mpc_output_pitch_sign) ||
+        !std::isfinite(config_.wbc_mpc_output_roll_scale) ||
+        !std::isfinite(config_.wbc_mpc_output_pitch_scale) ||
+        std::abs(config_.wbc_mpc_output_roll_sign) < 1.0e-6f ||
+        std::abs(config_.wbc_mpc_output_pitch_sign) < 1.0e-6f ||
+        config_.wbc_mpc_output_roll_scale < 0.0f ||
+        config_.wbc_mpc_output_pitch_scale < 0.0f ||
         config_.wbc_mpc_base_height_weight < 0.0f ||
         config_.wbc_mpc_yaw_weight < 0.0f ||
         config_.wbc_mpc_joint_angle_weight < 0.0f ||
@@ -50,6 +58,8 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.wbc_mpc_swing_position_weight < 0.0f ||
         config_.wbc_mpc_joint_command_position_gain < 0.0f ||
         config_.wbc_mpc_joint_command_velocity_scale < 0.0f ||
+        config_.wbc_mpc_joint_command_max_delta < 0.0f ||
+        config_.wbc_mpc_joint_command_max_velocity < 0.0f ||
         config_.wbc_mpc_swing_time_scale < 0.0f ||
         config_.wbc_mpc_swing_lift_off_velocity < 0.0f ||
         config_.wbc_mpc_swing_touch_down_velocity < 0.0f ||
@@ -75,6 +85,8 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
         config_.wbc_regularization_weight < 0.0f ||
         config_.wbc_smooth_weight < 0.0f ||
         config_.wbc_max_body_moment < 0.0f ||
+        config_.wbc_body_moment_rate_limit < 0.0f ||
+        config_.wbc_body_moment_filter_weight < 0.0f ||
         config_.wbc_max_joint_torque < 0.0f ||
         config_.wbc_foot_half_length < 0.0f ||
         config_.wbc_foot_half_width < 0.0f) {
@@ -122,6 +134,12 @@ StandingStabilizer::StandingStabilizer(Config config) : config_(std::move(config
     if (!config_.wbc_torque_joint_scale.empty() &&
         config_.wbc_torque_joint_scale.size() != static_cast<size_t>(config_.joint_num)) {
         throw std::runtime_error("StandingStabilizer wbc_torque_joint_scale size mismatch");
+    }
+    if (!config_.wbc_mpc_joint_command_joint_scale.empty() &&
+        config_.wbc_mpc_joint_command_joint_scale.size() !=
+            static_cast<size_t>(config_.joint_num)) {
+        throw std::runtime_error(
+            "StandingStabilizer wbc_mpc_joint_command_joint_scale size mismatch");
     }
 
     if (config_.whole_body_joint_order.size() != static_cast<size_t>(config_.joint_num)) {
@@ -188,6 +206,25 @@ StandingStabilizer::Command StandingStabilizer::apply(
     const std::vector<float>& kp, const std::vector<float>& kd,
     const std::vector<float>& current_joint_position,
     const std::vector<float>& current_joint_velocity) {
+    (void)measurement;
+    (void)blend;
+    (void)current_joint_position;
+    (void)current_joint_velocity;
+    const bool pure_stand_bypass =
+        (!config_.wbc_mpc_enabled || config_.wbc_mpc_backend == "disabled") &&
+        !config_.wbc_mpc_joint_command_enabled &&
+        !config_.wbc_torque_enabled &&
+        !config_.wbc_step_recovery_enabled;
+    if (pure_stand_bypass) {
+        Command command;
+        command.position = base_target;
+        command.velocity.assign(config_.joint_num, 0.0f);
+        command.kp = kp;
+        command.kd = kd;
+        command.tau.assign(config_.joint_num, 0.0f);
+        command.correction.wbc_mpc_backend = config_.wbc_mpc_backend;
+        return command;
+    }
     if (whole_body_mpc_controller_) {
         return whole_body_mpc_controller_->apply(measurement, blend, base_target, kp, kd,
                                                  current_joint_position, current_joint_velocity);

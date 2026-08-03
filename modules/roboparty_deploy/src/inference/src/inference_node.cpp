@@ -271,6 +271,7 @@ void InferenceNode::start_stand_transition_locked() {
 }
 
 void InferenceNode::apply_stand_action() {
+    const auto stand_start = std::chrono::steady_clock::now();
     quat_buffer_ = robot_->get_quat();
     ang_vel_buffer_ = robot_->get_ang_vel();
     joint_pos_buffer_ = robot_->get_joint_q();
@@ -314,24 +315,37 @@ void InferenceNode::apply_stand_action() {
         stand_stabilizer_->apply(measurement, mpc_blend, target, stand_kp_, stand_kd_,
                                  joint_pos_buffer_, joint_vel_buffer_);
     const StandingStabilizer::Correction& correction = command.correction;
+    const auto stand_calc_end = std::chrono::steady_clock::now();
+    const auto stand_calc_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            stand_calc_end - stand_start).count();
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                         "stand ctrl[whole_body_mpc]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f base_v=[%.3f, %.3f, %.3f] com_v=[%.3f, %.3f] est=%d/%d est_res=%.3g mpc=%s/%d iter=%d obj=%.3g mpc_acc=[%.3f, %.3f, %.3f, %.3f] mpc_f=%d L=[%.1f,%.1f,%.1f] R=[%.1f,%.1f,%.1f] step=%d phase=%d contacts=[%d,%d]/%d swing=[%d,%d] steps=%d/%d step_xy=[%.3f, %.3f] swing_err=%.3f force_qp=%d wbc_qp=%d active=%d viol=%.3g dyn_res=%.3g wbc_fz=[%.1f, %.1f] wbc_moment_des=[%.2f, %.2f] wbc_moment_act=[%.2f, %.2f] max_tau=%.3f raw_tau=%.3f sat=%d tau_j=%d",
+                         "stand ctrl[whole_body_mpc]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f base_v=[%.3f, %.3f, %.3f] com_v=[%.3f, %.3f] com_err=[%.3f, %.3f] est=%d/%d est_res=%.3g mpc=%s/%d iter=%d mpc_us=%d wbc_us=%d calc_us=%lld obj=%.3g mpc_acc=[%.3f, %.3f, %.3f, %.3f] mpc_f=%d jcmd=%d jcmd_delta=%.5f jcmd_vel=%.3f jcmd_j=%d L=[%.1f,%.1f,%.1f] R=[%.1f,%.1f,%.1f] step=%d phase=%d contacts=[%d,%d]/%d swing=[%d,%d] steps=%d/%d step_xy=[%.3f, %.3f] swing_err=%.3f force_qp=%d wbc_qp=%d active=%d viol=%.3g dyn_res=%.3g wbc_fz=[%.1f, %.1f] wbc_moment_des=[%.2f, %.2f] wbc_moment_act=[%.2f, %.2f] max_tau=%.3f raw_tau=%.3f sat=%d tau_j=%d",
                          measurement.roll, measurement.pitch, measurement.wx, measurement.wy,
                          correction.wbc_base_velocity_x,
                          correction.wbc_base_velocity_y,
                          correction.wbc_base_velocity_z,
                          correction.wbc_com_velocity_x,
                          correction.wbc_com_velocity_y,
+                         correction.wbc_com_error_x,
+                         correction.wbc_com_error_y,
                          correction.wbc_state_estimator_used ? 1 : 0,
                          correction.wbc_state_estimator_rows,
                          correction.wbc_state_estimator_residual,
                          correction.wbc_mpc_backend.c_str(),
                          correction.wbc_mpc_used ? 1 : 0,
                          correction.wbc_mpc_iterations,
+                         correction.wbc_mpc_solve_us,
+                         correction.wbc_whole_body_solve_us,
+                         static_cast<long long>(stand_calc_us),
                          correction.wbc_mpc_objective,
                          correction.mpc_roll_accel, correction.mpc_pitch_accel,
                          correction.mpc_com_accel_x, correction.mpc_com_accel_y,
                          correction.wbc_mpc_force_target_used ? 1 : 0,
+                         correction.mpc_joint_command_used ? 1 : 0,
+                         correction.mpc_joint_command_max_delta,
+                         correction.mpc_joint_command_max_velocity,
+                         correction.mpc_joint_command_max_joint_index,
                          correction.mpc_left_force_x,
                          correction.mpc_left_force_y,
                          correction.mpc_left_force_z,
@@ -417,6 +431,12 @@ void InferenceNode::control() {
         auto sleep_time = period - elapsed_time;
         if (sleep_time > std::chrono::microseconds(0)) {
             std::this_thread::sleep_for(sleep_time);
+        } else {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Control loop overran! Took %lld us, but period is %lld us.",
+                static_cast<long long>(elapsed_time.count()),
+                static_cast<long long>(period.count()));
         }
     }
 }
@@ -440,54 +460,54 @@ void InferenceNode::inference() {
             std::unique_lock<std::mutex> mode_lock(mode_mutex_);
             if (control_mode_ == ControlMode::Stand) {
                 mode_lock.unlock();
-                std::this_thread::sleep_for(period);
-                continue;
-            }
-            auto& policy = active_policy();
-            if (!policy.inference_enabled || !policy.ctx) {
-                RCLCPP_ERROR_THROTTLE(
-                    this->get_logger(), *this->get_clock(), 1000,
-                    "Active policy %s is disabled: %s",
-                    policy.name.c_str(), policy.disabled_reason.c_str());
-                is_running_.store(false);
-                mode_lock.unlock();
-                std::this_thread::sleep_for(period);
-                continue;
-            }
-            update_obs_segments(policy.obs_segments, policy.obs_layout);
-            publish_imu();
-            publish_joint_states();
-            flatten_obs_segments(policy.obs_segments, policy.obs.begin());
+            std::this_thread::sleep_for(period);
+            continue;
+        }
+        auto& policy = active_policy();
+        if (!policy.inference_enabled || !policy.ctx) {
+            RCLCPP_ERROR_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Active policy %s is disabled: %s",
+                policy.name.c_str(), policy.disabled_reason.c_str());
+            is_running_.store(false);
+            mode_lock.unlock();
+            std::this_thread::sleep_for(period);
+            continue;
+        }
+        update_obs_segments(policy.obs_segments, policy.obs_layout);
+        publish_imu();
+        publish_joint_states();
+        flatten_obs_segments(policy.obs_segments, policy.obs.begin());
 
-            std::transform(policy.obs.begin(), policy.obs.end(), policy.obs.begin(), [this](float val) {
-                return std::clamp(val, -clip_observations_, clip_observations_);
-            });
+        std::transform(policy.obs.begin(), policy.obs.end(), policy.obs.begin(), [this](float val) {
+            return std::clamp(val, -clip_observations_, clip_observations_);
+        });
 
-            update_stacked_obs(policy.ctx->input_buffer, policy.obs, policy.obs_num, policy.frame_stack,
-                               policy.stack_order, policy.obs_layout_sizes, policy.is_first_frame);
-            if(policy.extra_obs_num > 0){
-                update_obs_segments(policy.extra_obs_segments, policy.extra_obs_layout);
-                flatten_obs_segments(policy.extra_obs_segments, policy.ctx->input_buffer.begin() + policy.frame_stack * policy.obs_num);
+        update_stacked_obs(policy.ctx->input_buffer, policy.obs, policy.obs_num, policy.frame_stack,
+                            policy.stack_order, policy.obs_layout_sizes, policy.is_first_frame);
+        if(policy.extra_obs_num > 0){
+            update_obs_segments(policy.extra_obs_segments, policy.extra_obs_layout);
+            flatten_obs_segments(policy.extra_obs_segments, policy.ctx->input_buffer.begin() + policy.frame_stack * policy.obs_num);
+        }
+        if (policy.motion_loader) {
+            step_motion_frame();
+        }
+        policy.is_first_frame = false;
+
+        policy.ctx->session->Run(Ort::RunOptions{nullptr},
+            policy.ctx->input_names_raw.data(), policy.ctx->input_tensor.get(), policy.ctx->num_inputs,
+            policy.ctx->output_names_raw.data(), policy.ctx->output_tensor.get(), policy.ctx->num_outputs);
+
+        {
+            std::unique_lock<std::mutex> lock(act_mutex_);
+            for (float& action : policy.ctx->output_buffer) {
+                action = std::clamp(action, -clip_actions_, clip_actions_);
             }
-            if (policy.motion_loader) {
-                step_motion_frame();
+            for (size_t i = 0; i < usd2urdf_.size(); i++) {
+                const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
+                act_[joint_idx] = policy.ctx->output_buffer[i];
+                act_[joint_idx] = act_[joint_idx] * action_scale_ + joint_default_angle_[joint_idx];
             }
-            policy.is_first_frame = false;
-
-            policy.ctx->session->Run(Ort::RunOptions{nullptr},
-                policy.ctx->input_names_raw.data(), policy.ctx->input_tensor.get(), policy.ctx->num_inputs,
-                policy.ctx->output_names_raw.data(), policy.ctx->output_tensor.get(), policy.ctx->num_outputs);
-
-            {
-                std::unique_lock<std::mutex> lock(act_mutex_);
-                for (float& action : policy.ctx->output_buffer) {
-                    action = std::clamp(action, -clip_actions_, clip_actions_);
-                }
-                for (size_t i = 0; i < usd2urdf_.size(); i++) {
-                    const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
-                    act_[joint_idx] = policy.ctx->output_buffer[i];
-                    act_[joint_idx] = act_[joint_idx] * action_scale_ + joint_default_angle_[joint_idx];
-                }
                 if(supports_interrupt() && is_interrupt_.load()){
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);
                     for (size_t i = 0; i < interrupt_action_.size(); i++) {

@@ -44,9 +44,9 @@ void InferenceNode::load_config() {
     this->declare_parameter<bool>("stand_validate_whole_body_model", false);
     this->declare_parameter<bool>("stand_wbc_mpc_enabled", true);
     this->declare_parameter<std::string>("stand_wbc_mpc_backend", "ocs2");
-    this->declare_parameter<bool>("stand_wbc_mpc_mrt_enabled", false);
-    this->declare_parameter<bool>("stand_wbc_mpc_mrt_first_solve_blocking", true);
-    this->declare_parameter<float>("stand_wbc_mpc_mrt_max_policy_age", 0.08);
+    this->declare_parameter<bool>("stand_wbc_mpc_mrt_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_mrt_first_solve_blocking", false);
+    this->declare_parameter<float>("stand_wbc_mpc_mrt_max_policy_age", 0.20);
     this->declare_parameter<int>("stand_wbc_mpc_horizon", 20);
     this->declare_parameter<float>("stand_wbc_mpc_dt", 0.012);
     this->declare_parameter<float>("stand_wbc_target_roll", 0.0);
@@ -76,6 +76,10 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("stand_wbc_mpc_max_angular_accel", 12.0);
     this->declare_parameter<float>("stand_wbc_mpc_max_com_accel", 2.0);
     this->declare_parameter<float>("stand_wbc_mpc_max_contact_force_delta", 60.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_roll_sign", 1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_pitch_sign", -1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_roll_scale", 1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_pitch_scale", 1.0);
     this->declare_parameter<float>("stand_wbc_mpc_base_height_weight", 5.0);
     this->declare_parameter<float>("stand_wbc_mpc_yaw_weight", 1.0);
     this->declare_parameter<float>("stand_wbc_mpc_joint_angle_weight", 0.5);
@@ -84,6 +88,9 @@ void InferenceNode::load_config() {
     this->declare_parameter<bool>("stand_wbc_mpc_joint_command_enabled", false);
     this->declare_parameter<float>("stand_wbc_mpc_joint_command_position_gain", 0.25);
     this->declare_parameter<float>("stand_wbc_mpc_joint_command_velocity_scale", 1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_joint_command_max_delta", 0.00025);
+    this->declare_parameter<float>("stand_wbc_mpc_joint_command_max_velocity", 0.15);
+    this->declare_parameter<std::vector<double>>("stand_wbc_mpc_joint_command_joint_scale", std::vector<double>{});
     this->declare_parameter<float>("stand_wbc_mpc_swing_time_scale", 0.15);
     this->declare_parameter<float>("stand_wbc_mpc_swing_lift_off_velocity", 0.0);
     this->declare_parameter<float>("stand_wbc_mpc_swing_touch_down_velocity", 0.0);
@@ -116,6 +123,8 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("stand_wbc_regularization_weight", 0.0001);
     this->declare_parameter<float>("stand_wbc_smooth_weight", 0.02);
     this->declare_parameter<float>("stand_wbc_max_body_moment", 8.0);
+    this->declare_parameter<float>("stand_wbc_body_moment_rate_limit", 0.0);
+    this->declare_parameter<float>("stand_wbc_body_moment_filter_weight", 0.0);
     this->declare_parameter<float>("stand_wbc_max_joint_torque", 0.6);
     this->declare_parameter<float>("stand_wbc_foot_half_length", 0.065);
     this->declare_parameter<float>("stand_wbc_foot_half_width", 0.035);
@@ -254,6 +263,10 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_mpc_max_angular_accel", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
     this->get_parameter("stand_wbc_mpc_max_com_accel", stand_stabilizer_config_.wbc_mpc_max_com_accel);
     this->get_parameter("stand_wbc_mpc_max_contact_force_delta", stand_stabilizer_config_.wbc_mpc_max_contact_force_delta);
+    this->get_parameter("stand_wbc_mpc_output_roll_sign", stand_stabilizer_config_.wbc_mpc_output_roll_sign);
+    this->get_parameter("stand_wbc_mpc_output_pitch_sign", stand_stabilizer_config_.wbc_mpc_output_pitch_sign);
+    this->get_parameter("stand_wbc_mpc_output_roll_scale", stand_stabilizer_config_.wbc_mpc_output_roll_scale);
+    this->get_parameter("stand_wbc_mpc_output_pitch_scale", stand_stabilizer_config_.wbc_mpc_output_pitch_scale);
     this->get_parameter("stand_wbc_mpc_base_height_weight", stand_stabilizer_config_.wbc_mpc_base_height_weight);
     this->get_parameter("stand_wbc_mpc_yaw_weight", stand_stabilizer_config_.wbc_mpc_yaw_weight);
     this->get_parameter("stand_wbc_mpc_joint_angle_weight", stand_stabilizer_config_.wbc_mpc_joint_angle_weight);
@@ -262,6 +275,9 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_mpc_joint_command_enabled", stand_stabilizer_config_.wbc_mpc_joint_command_enabled);
     this->get_parameter("stand_wbc_mpc_joint_command_position_gain", stand_stabilizer_config_.wbc_mpc_joint_command_position_gain);
     this->get_parameter("stand_wbc_mpc_joint_command_velocity_scale", stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale);
+    this->get_parameter("stand_wbc_mpc_joint_command_max_delta", stand_stabilizer_config_.wbc_mpc_joint_command_max_delta);
+    this->get_parameter("stand_wbc_mpc_joint_command_max_velocity", stand_stabilizer_config_.wbc_mpc_joint_command_max_velocity);
+    this->get_parameter("stand_wbc_mpc_joint_command_joint_scale", stand_stabilizer_config_.wbc_mpc_joint_command_joint_scale);
     this->get_parameter("stand_wbc_mpc_swing_time_scale", stand_stabilizer_config_.wbc_mpc_swing_time_scale);
     this->get_parameter("stand_wbc_mpc_swing_lift_off_velocity", stand_stabilizer_config_.wbc_mpc_swing_lift_off_velocity);
     this->get_parameter("stand_wbc_mpc_swing_touch_down_velocity", stand_stabilizer_config_.wbc_mpc_swing_touch_down_velocity);
@@ -294,6 +310,8 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_regularization_weight", stand_stabilizer_config_.wbc_regularization_weight);
     this->get_parameter("stand_wbc_smooth_weight", stand_stabilizer_config_.wbc_smooth_weight);
     this->get_parameter("stand_wbc_max_body_moment", stand_stabilizer_config_.wbc_max_body_moment);
+    this->get_parameter("stand_wbc_body_moment_rate_limit", stand_stabilizer_config_.wbc_body_moment_rate_limit);
+    this->get_parameter("stand_wbc_body_moment_filter_weight", stand_stabilizer_config_.wbc_body_moment_filter_weight);
     this->get_parameter("stand_wbc_max_joint_torque", stand_stabilizer_config_.wbc_max_joint_torque);
     this->get_parameter("stand_wbc_foot_half_length", stand_stabilizer_config_.wbc_foot_half_length);
     this->get_parameter("stand_wbc_foot_half_width", stand_stabilizer_config_.wbc_foot_half_width);
@@ -438,6 +456,8 @@ void InferenceNode::load_config() {
         stand_stabilizer_config_.wbc_regularization_weight < 0.0f ||
         stand_stabilizer_config_.wbc_smooth_weight < 0.0f ||
         stand_stabilizer_config_.wbc_max_body_moment < 0.0f ||
+        stand_stabilizer_config_.wbc_body_moment_rate_limit < 0.0f ||
+        stand_stabilizer_config_.wbc_body_moment_filter_weight < 0.0f ||
         stand_stabilizer_config_.wbc_max_joint_torque < 0.0f ||
         stand_stabilizer_config_.wbc_foot_half_length < 0.0f ||
         stand_stabilizer_config_.wbc_foot_half_width < 0.0f) {
@@ -697,8 +717,13 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_angular_accel: %f", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_com_accel: %f", stand_stabilizer_config_.wbc_mpc_max_com_accel);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_contact_force_delta: %f", stand_stabilizer_config_.wbc_mpc_max_contact_force_delta);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_output_signs: roll=%f pitch=%f scale=[%f, %f]",
+                stand_stabilizer_config_.wbc_mpc_output_roll_sign,
+                stand_stabilizer_config_.wbc_mpc_output_pitch_sign,
+                stand_stabilizer_config_.wbc_mpc_output_roll_scale,
+                stand_stabilizer_config_.wbc_mpc_output_pitch_scale);
     RCLCPP_INFO(this->get_logger(),
-                "stand_wbc_mpc_full_centroidal_weights: base_height=%f yaw=%f joint_angle=%f joint_velocity=%f swing_position=%f swing_time_scale=%f joint_cmd=%s pos_gain=%f vel_scale=%f",
+                "stand_wbc_mpc_full_centroidal_weights: base_height=%f yaw=%f joint_angle=%f joint_velocity=%f swing_position=%f swing_time_scale=%f joint_cmd=%s pos_gain=%f vel_scale=%f max_delta=%f max_vel=%f",
                 stand_stabilizer_config_.wbc_mpc_base_height_weight,
                 stand_stabilizer_config_.wbc_mpc_yaw_weight,
                 stand_stabilizer_config_.wbc_mpc_joint_angle_weight,
@@ -707,7 +732,9 @@ void InferenceNode::load_config() {
                 stand_stabilizer_config_.wbc_mpc_swing_time_scale,
                 stand_stabilizer_config_.wbc_mpc_joint_command_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_joint_command_position_gain,
-                stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale);
+                stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale,
+                stand_stabilizer_config_.wbc_mpc_joint_command_max_delta,
+                stand_stabilizer_config_.wbc_mpc_joint_command_max_velocity);
     RCLCPP_INFO(this->get_logger(),
                 "stand_wbc_mpc_ad: folder=%s recompile=%s verbose=%s",
                 stand_stabilizer_config_.wbc_mpc_ad_model_folder.c_str(),
@@ -750,6 +777,8 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_wbc_regularization_weight: %f", stand_stabilizer_config_.wbc_regularization_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_smooth_weight: %f", stand_stabilizer_config_.wbc_smooth_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_body_moment: %f", stand_stabilizer_config_.wbc_max_body_moment);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_body_moment_rate_limit: %f", stand_stabilizer_config_.wbc_body_moment_rate_limit);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_body_moment_filter_weight: %f", stand_stabilizer_config_.wbc_body_moment_filter_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_joint_torque: %f", stand_stabilizer_config_.wbc_max_joint_torque);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_foot_geometry: half_length=%f half_width=%f center_x=%f contact_z=%f",
                 stand_stabilizer_config_.wbc_foot_half_length,
@@ -807,6 +836,7 @@ void InferenceNode::load_config() {
                 stand_stabilizer_config_.wbc_swing_max_joint_delta,
                 stand_stabilizer_config_.wbc_swing_max_joint_velocity);
     print_vector<double>("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
+    print_vector<double>("stand_wbc_mpc_joint_command_joint_scale", stand_stabilizer_config_.wbc_mpc_joint_command_joint_scale);
     print_vector<float>("stand_kp", stand_kp_);
     print_vector<float>("stand_kd", stand_kd_);
     print_vector<double>("joint_limits", joint_limits_);

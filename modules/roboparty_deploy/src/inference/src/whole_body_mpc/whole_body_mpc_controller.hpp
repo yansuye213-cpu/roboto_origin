@@ -50,7 +50,7 @@ class WholeBodyMpcController {
         const std::vector<float>& current_joint_velocity) const;
     ContactForceQp::Input build_contact_qp_input(
         const CentroidalMpc::Output& mpc_output,
-        const ContactPointSet& contacts) const;
+        const ContactPointSet& contacts);
     ContactForceQp::Result make_nominal_contact_result(
         const ContactForceQp::Input& input) const;
     ContactPointSet build_contact_point_set(
@@ -72,7 +72,10 @@ class WholeBodyMpcController {
         const CentroidalMpc::Output& mpc_output,
         const std::vector<float>& current_joint_position,
         std::vector<float>& command_position,
-        std::vector<float>& command_velocity) const;
+        std::vector<float>& command_velocity,
+        StandingStabilizer::Correction& correction) const;
+    void smooth_mpc_output(CentroidalMpc::Output& mpc_output);
+    Eigen::Vector3d smooth_body_moment_target(const Eigen::Vector3d& target);
     void apply_foot_ik_target(
         const Eigen::Matrix<double, 6, Eigen::Dynamic>& foot_jacobian,
         const Eigen::Vector3d& position_error,
@@ -95,9 +98,16 @@ class WholeBodyMpcController {
     RobotModel::Kinematics latest_kinematics_;
     BaseStateEstimator::Output latest_state_estimate_;
     Eigen::Vector2d neutral_com_offset_xy_ = Eigen::Vector2d::Zero();
+    Eigen::Vector3d smoothed_mpc_angular_acceleration_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d smoothed_mpc_com_acceleration_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d smoothed_mpc_left_force_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d smoothed_mpc_right_force_ = Eigen::Vector3d::Zero();
+    Eigen::Vector3d smoothed_body_moment_ = Eigen::Vector3d::Zero();
     double robot_mass_ = 0.0;
     bool state_estimator_left_contact_ = true;
     bool state_estimator_right_contact_ = true;
+    bool has_smoothed_mpc_output_ = false;
+    bool has_smoothed_body_moment_ = false;
     std::vector<int> left_leg_joint_indices_;
     std::vector<int> right_leg_joint_indices_;
 };

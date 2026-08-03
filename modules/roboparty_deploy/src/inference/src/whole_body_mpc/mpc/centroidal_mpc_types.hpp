@@ -18,9 +18,9 @@ struct CentroidalMpcConfig {
     double control_dt = 0.004;
     bool enabled = true;
     std::string backend = "ocs2";
-    bool mrt_enabled = false;
-    bool mrt_first_solve_blocking = true;
-    double mrt_max_policy_age = 0.08;
+    bool mrt_enabled = true;
+    bool mrt_first_solve_blocking = false;
+    double mrt_max_policy_age = 0.20;
     double orientation_weight = 120.0;
     double angular_rate_weight = 1.4;
     double com_weight = 30.0;

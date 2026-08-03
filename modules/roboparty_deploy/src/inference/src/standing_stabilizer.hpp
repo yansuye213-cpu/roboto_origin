@@ -25,9 +25,9 @@ class StandingStabilizer {
         bool validate_whole_body_model = false;
         bool wbc_mpc_enabled = true;
         std::string wbc_mpc_backend = "ocs2";
-        bool wbc_mpc_mrt_enabled = false;
-        bool wbc_mpc_mrt_first_solve_blocking = true;
-        float wbc_mpc_mrt_max_policy_age = 0.08f;
+        bool wbc_mpc_mrt_enabled = true;
+        bool wbc_mpc_mrt_first_solve_blocking = false;
+        float wbc_mpc_mrt_max_policy_age = 0.20f;
         int wbc_mpc_horizon = 20;
         float wbc_mpc_dt = 0.012f;
         float wbc_target_roll = 0.0f;
@@ -57,6 +57,10 @@ class StandingStabilizer {
         float wbc_mpc_max_angular_accel = 12.0f;
         float wbc_mpc_max_com_accel = 2.0f;
         float wbc_mpc_max_contact_force_delta = 60.0f;
+        float wbc_mpc_output_roll_sign = 1.0f;
+        float wbc_mpc_output_pitch_sign = -1.0f;
+        float wbc_mpc_output_roll_scale = 1.0f;
+        float wbc_mpc_output_pitch_scale = 1.0f;
         float wbc_mpc_base_height_weight = 5.0f;
         float wbc_mpc_yaw_weight = 1.0f;
         float wbc_mpc_joint_angle_weight = 0.5f;
@@ -65,6 +69,9 @@ class StandingStabilizer {
         bool wbc_mpc_joint_command_enabled = false;
         float wbc_mpc_joint_command_position_gain = 0.25f;
         float wbc_mpc_joint_command_velocity_scale = 1.0f;
+        float wbc_mpc_joint_command_max_delta = 0.00025f;
+        float wbc_mpc_joint_command_max_velocity = 0.15f;
+        std::vector<double> wbc_mpc_joint_command_joint_scale;
         float wbc_mpc_swing_time_scale = 0.15f;
         float wbc_mpc_swing_lift_off_velocity = 0.0f;
         float wbc_mpc_swing_touch_down_velocity = 0.0f;
@@ -97,6 +104,8 @@ class StandingStabilizer {
         float wbc_regularization_weight = 1.0e-4f;
         float wbc_smooth_weight = 0.02f;
         float wbc_max_body_moment = 8.0f;
+        float wbc_body_moment_rate_limit = 0.0f;
+        float wbc_body_moment_filter_weight = 0.0f;
         float wbc_max_joint_torque = 0.6f;
         float wbc_foot_half_length = 0.065f;
         float wbc_foot_half_width = 0.035f;
@@ -176,10 +185,15 @@ class StandingStabilizer {
         float mpc_right_force_x = 0.0f;
         float mpc_right_force_y = 0.0f;
         float mpc_right_force_z = 0.0f;
+        float mpc_joint_command_max_delta = 0.0f;
+        float mpc_joint_command_max_velocity = 0.0f;
         std::string wbc_mpc_backend = "disabled";
         bool wbc_mpc_used = false;
         bool wbc_mpc_force_target_used = false;
+        bool mpc_joint_command_used = false;
         int wbc_mpc_iterations = 0;
+        int wbc_mpc_solve_us = 0;
+        int wbc_whole_body_solve_us = 0;
         float wbc_mpc_objective = 0.0f;
         float wbc_left_normal_force = 0.0f;
         float wbc_right_normal_force = 0.0f;
@@ -197,6 +211,8 @@ class StandingStabilizer {
         float wbc_base_velocity_z = 0.0f;
         float wbc_com_velocity_x = 0.0f;
         float wbc_com_velocity_y = 0.0f;
+        float wbc_com_error_x = 0.0f;
+        float wbc_com_error_y = 0.0f;
         float wbc_state_estimator_residual = 0.0f;
         float wbc_step_x = 0.0f;
         float wbc_step_y = 0.0f;
@@ -204,6 +220,7 @@ class StandingStabilizer {
         int wbc_active_constraints = 0;
         int wbc_saturated_joint_count = 0;
         int wbc_max_torque_joint_index = -1;
+        int mpc_joint_command_max_joint_index = -1;
         int wbc_step_phase = 0;
         int wbc_steps_completed = 0;
         int wbc_steps_planned = 0;
