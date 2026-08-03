@@ -40,17 +40,11 @@ RobotModel::RobotModel(Config config) : config_(std::move(config)) {
     impl_ = std::make_unique<Impl>();
 
     auto model = std::make_unique<pinocchio::Model>();
-    pinocchio::urdf::details::UrdfVisitor visitor(*model);
     if (config_.floating_base) {
-        pinocchio::parsers::JointModel root_joint = pinocchio::JointModelFreeFlyer();
-        const std::string root_joint_name = "root_joint";
-        boost::optional<const pinocchio::parsers::JointModel&> root_joint_opt(root_joint);
-        boost::optional<const std::string&> root_joint_name_opt(root_joint_name);
-        pinocchio::urdf::details::parseRootTree(
-            config_.urdf_path, visitor, root_joint_opt, root_joint_name_opt, false);
+        pinocchio::urdf::buildModel(config_.urdf_path, pinocchio::JointModelFreeFlyer(),
+                                    *model, false);
     } else {
-        pinocchio::urdf::details::parseRootTree(
-            config_.urdf_path, visitor, boost::none, boost::none, false);
+        pinocchio::urdf::buildModel(config_.urdf_path, *model, false);
     }
     impl_->model = std::move(model);
     impl_->data = std::make_unique<pinocchio::Data>(*impl_->model);

@@ -17,17 +17,6 @@ ASSET_PY = ROBO_LAB_ROOT / "robolab/assets/robots/roboparty.py"
 URDF_PATH = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/urdf/rpo_21.urdf"
 MJCF_DIR = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/mjcf"
 
-MJCF_PRIMITIVE_GEOMS = {
-    # MuJoCo rejects STL meshes with more than 200k faces. The Loobot614 base
-    # mesh has 266106 faces, so use its bounding box for sim2sim collision.
-    "base_link": {
-        "type": "box",
-        "pos": "0.00231503 0 0.08337592",
-        "size": "0.08131504 0.22175001 0.20637409",
-    },
-}
-
-
 def _fmt(values: str | list[str]) -> str:
     if isinstance(values, str):
         values = values.split()
@@ -51,7 +40,7 @@ def _child(element: ET.Element, path: str) -> ET.Element:
     return child
 
 
-def _link_info(link: ET.Element) -> dict[str, str]:
+def _link_info(link: ET.Element) -> dict[str, object]:
     inertial = _child(link, "inertial")
     inertia = _child(inertial, "inertia").attrib
     visual = link.find("visual")
@@ -64,6 +53,19 @@ def _link_info(link: ET.Element) -> dict[str, str]:
         color_node = visual.find("material/color")
         if color_node is not None:
             color = _fmt(color_node.attrib["rgba"])
+
+    collisions = []
+    for collision in link.findall("collision"):
+        origin = collision.find("origin")
+        pos = _fmt(origin.attrib.get("xyz", "0 0 0")) if origin is not None else "0 0 0"
+        euler = _fmt(origin.attrib.get("rpy", "0 0 0")) if origin is not None else "0 0 0"
+        box = collision.find("geometry/box")
+        mesh = collision.find("geometry/mesh")
+        if box is not None:
+            half_size = [str(float(value) * 0.5) for value in box.attrib["size"].split()]
+            collisions.append({"type": "box", "pos": pos, "euler": euler, "size": _fmt(half_size)})
+        elif mesh is not None:
+            collisions.append({"type": "mesh", "pos": pos, "euler": euler})
     return {
         "mass": _child(inertial, "mass").attrib["value"],
         "pos": _fmt(_child(inertial, "origin").attrib.get("xyz", "0 0 0")),
@@ -79,6 +81,7 @@ def _link_info(link: ET.Element) -> dict[str, str]:
         ),
         "mesh_file": mesh_file,
         "rgba": color,
+        "collisions": collisions,
     }
 
 
@@ -135,7 +138,7 @@ def _add_common(parent: ET.Element):
         ET.SubElement(class_default, "joint", damping="0.01", frictionloss="0.01", armature="0.01")
 
 
-def _add_assets(parent: ET.Element, links: dict[str, dict[str, str]], include_terrain: bool, include_stairs: bool):
+def _add_assets(parent: ET.Element, links: dict[str, dict[str, object]], include_terrain: bool, include_stairs: bool):
     asset = ET.SubElement(parent, "asset")
     ET.SubElement(
         asset,
@@ -164,7 +167,9 @@ def _add_assets(parent: ET.Element, links: dict[str, dict[str, str]], include_te
     if include_stairs:
         ET.SubElement(asset, "material", name="stairmat", rgba="0.65 0.65 0.7 1")
     for link_name, info in links.items():
-        if link_name in MJCF_PRIMITIVE_GEOMS:
+        # Loobot722's base mesh exceeds MuJoCo's 200k-face STL limit. Its
+        # three URDF collision boxes provide both collision and visualization.
+        if link_name == "base_link":
             continue
         ET.SubElement(asset, "mesh", name=link_name, file=info["mesh_file"])
     if include_terrain:
@@ -196,7 +201,7 @@ def _add_stairs(worldbody: ET.Element):
 def _add_link_body(
     parent: ET.Element,
     link_name: str,
-    links: dict[str, dict[str, str]],
+    links: dict[str, dict[str, object]],
     joints: dict[str, dict[str, str]],
     children_by_parent: dict[str, list[str]],
     joint_order: list[str],
@@ -217,10 +222,30 @@ def _add_link_body(
             range=joint["range"],
             **{"class": _joint_class(incoming_joint_name)},
         )
-    if link_name in MJCF_PRIMITIVE_GEOMS:
-        ET.SubElement(parent, "geom", rgba=info["rgba"], **MJCF_PRIMITIVE_GEOMS[link_name])
-    else:
-        ET.SubElement(parent, "geom", type="mesh", rgba=info["rgba"], mesh=link_name)
+    if link_name != "base_link":
+        ET.SubElement(
+            parent,
+            "geom",
+            type="mesh",
+            rgba=info["rgba"],
+            mesh=link_name,
+            contype="0",
+            conaffinity="0",
+            group="2",
+        )
+    for collision in info["collisions"]:
+        geom = {
+            "type": collision["type"],
+            "pos": collision["pos"],
+            "rgba": info["rgba"] if link_name == "base_link" else "0 0 0 0",
+        }
+        if collision["euler"] != "0 0 0":
+            geom["euler"] = collision["euler"]
+        if collision["type"] == "box":
+            geom["size"] = collision["size"]
+        else:
+            geom["mesh"] = link_name
+        ET.SubElement(parent, "geom", **geom)
     ordered_children = sorted(
         children_by_parent.get(link_name, []),
         key=lambda name: joint_order.index(name) if name in joint_order else len(joint_order),
@@ -235,7 +260,7 @@ def _add_link_body(
 
 def _add_worldbody(
     parent: ET.Element,
-    links: dict[str, dict[str, str]],
+    links: dict[str, dict[str, object]],
     joints: dict[str, dict[str, str]],
     children_by_parent: dict[str, list[str]],
     joint_order: list[str],

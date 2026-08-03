@@ -368,8 +368,12 @@ void InferenceNode::load_config() {
     if (!stand_stabilizer_config_.whole_body_model_path.empty()) {
         const std::filesystem::path model_path(stand_stabilizer_config_.whole_body_model_path);
         if (model_path.is_relative()) {
+            std::filesystem::path robot_config_path(robot_config_path_);
+            if (robot_config_path.is_relative()) {
+                robot_config_path = std::filesystem::absolute(robot_config_path);
+            }
             stand_stabilizer_config_.whole_body_model_path =
-                (std::filesystem::path(ROOT_DIR) / model_path).lexically_normal().string();
+                (robot_config_path.parent_path() / model_path).lexically_normal().string();
         }
     }
     std::vector<double> stand_kp_config;
@@ -844,27 +848,54 @@ void InferenceNode::load_config() {
 }
 
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
-    constexpr int kButtonA = 0;
-    constexpr int kButtonB = 1;
-    constexpr int kButtonY = 2;
-    constexpr int kButtonX = 3;
-    constexpr int kButtonLB = 4;
-    constexpr int kButtonRB = 5;
-    constexpr int kButtonLSB = 11;
+    constexpr size_t kButtonA = 0;
+    constexpr size_t kButtonB = 1;
+    constexpr size_t kButtonY = 2;
+    constexpr size_t kButtonX = 3;
+    constexpr size_t kButtonLB = 4;
+    constexpr size_t kButtonRB = 5;
+    constexpr size_t kButtonLSB = 11;
+    constexpr size_t kRequiredAxes = 6;
+    constexpr size_t kRequiredBasicButtons = kButtonX + 1;
+
+    const auto button = [&msg](size_t index) -> int {
+        return index < msg->buttons.size() ? msg->buttons[index] : 0;
+    };
+    const int button_a = button(kButtonA);
+    const int button_b = button(kButtonB);
+    const int button_y = button(kButtonY);
+    const int button_x = button(kButtonX);
+    const int button_lb = button(kButtonLB);
+    const int button_rb = button(kButtonRB);
+    const int button_lsb = button(kButtonLSB);
+
+    if (msg->axes.size() < kRequiredAxes ||
+        msg->buttons.size() < kRequiredBasicButtons) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "Joy message too small: axes=%zu (need at least %zu), buttons=%zu "
+            "(need at least %zu); missing controls ignored",
+            msg->axes.size(), kRequiredAxes, msg->buttons.size(),
+            kRequiredBasicButtons);
+    }
 
     if (is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
-        cmd_vel_[0] = std::clamp(msg->axes[4] * clip_cmd_[1], clip_cmd_[0], clip_cmd_[1]);
-        cmd_vel_[1] = std::clamp(msg->axes[3] * clip_cmd_[3], clip_cmd_[2], clip_cmd_[3]);
+        if (msg->axes.size() < kRequiredAxes) {
+            std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        } else {
+            cmd_vel_[0] = std::clamp(msg->axes[4] * clip_cmd_[1], clip_cmd_[0], clip_cmd_[1]);
+            cmd_vel_[1] = std::clamp(msg->axes[3] * clip_cmd_[3], clip_cmd_[2], clip_cmd_[3]);
             if (msg->axes[2] < 0) {
-            cmd_vel_[2] = std::clamp(-msg->axes[2] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
+                cmd_vel_[2] = std::clamp(-msg->axes[2] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
             } else if (msg->axes[5] < 0) {
-            cmd_vel_[2] = std::clamp(msg->axes[5] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
+                cmd_vel_[2] = std::clamp(msg->axes[5] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
             } else {
-            cmd_vel_[2] = 0.0;
+                cmd_vel_[2] = 0.0;
+            }
         }
     }
-    if ((msg->buttons[kButtonX] == 1 && msg->buttons[kButtonX] != last_button0_)) {
+    if (button_x == 1 && button_x != last_button0_) {
         if(is_running_.load()){
             reset_runtime_state();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
@@ -877,7 +908,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             RCLCPP_INFO(this->get_logger(), "Motors initialized");
         }
     }
-    if (msg->buttons[kButtonA] == 1 && msg->buttons[kButtonA] != last_button1_) {
+    if (button_a == 1 && button_a != last_button1_) {
         if (is_running_.load()){
             reset_runtime_state();
             RCLCPP_INFO(this->get_logger(), "Inference paused");
@@ -889,25 +920,25 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             RCLCPP_INFO(this->get_logger(), "Motors reset");
         }
     }
-    if (msg->buttons[kButtonB] == 1 && msg->buttons[kButtonB] != last_button2_) {
+    if (button_b == 1 && button_b != last_button2_) {
         if (!is_running_.load() && control_mode_ == ControlMode::Policy &&
             (!active_policy().inference_enabled || !active_policy().ctx)) {
             RCLCPP_WARN(this->get_logger(),
                         "Cannot start policy mode: policy %s is disabled: %s. Use LSB for stand mode.",
                         active_policy().name.c_str(),
                         active_policy().disabled_reason.c_str());
-            last_button2_ = msg->buttons[kButtonB];
+            last_button2_ = button_b;
             return;
         }
         is_running_.store(!is_running_.load());
         RCLCPP_INFO(this->get_logger(), "Control %s", is_running_.load() ? "started" : "paused");
     }
-    if (msg->buttons[kButtonY] == 1 && msg->buttons[kButtonY] != last_button3_) {
+    if (button_y == 1 && button_y != last_button3_) {
         is_joy_control_.store(!is_joy_control_);
         RCLCPP_INFO(this->get_logger(), "Controlled by %s", is_joy_control_.load() ? "joy" : "/cmd_vel");
     }
     if (supports_interrupt() || has_motion_policy()) {
-        if (msg->buttons[kButtonLB] == 1 && msg->buttons[kButtonLB] != last_button4_) {
+        if (button_lb == 1 && button_lb != last_button4_) {
             const auto switch_while_paused = [this](auto&& switch_mode) {
                 std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
                 const bool restore_running = is_running_.exchange(false);
@@ -946,35 +977,33 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 });
             }
         }
-        last_button4_ = msg->buttons[kButtonLB];
+        last_button4_ = button_lb;
     }
-    if (msg->buttons.size() > static_cast<size_t>(kButtonLSB)) {
-        if (msg->buttons[kButtonLSB] == 1 && msg->buttons[kButtonLSB] != last_button_lsb_) {
-            std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
-            if (!robot_->is_init_.load()) {
-                RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot enter stand mode");
+    if (button_lsb == 1 && button_lsb != last_button_lsb_) {
+        std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
+        if (!robot_->is_init_.load()) {
+            RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot enter stand mode");
+        } else {
+            std::unique_lock<std::mutex> lock(mode_mutex_);
+            if (control_mode_ == ControlMode::Stand) {
+                control_mode_ = ControlMode::Policy;
+                stand_transition_active_ = false;
+                is_running_.store(false);
+                RCLCPP_INFO(this->get_logger(), "Stand mode disabled");
             } else {
-                std::unique_lock<std::mutex> lock(mode_mutex_);
-                if (control_mode_ == ControlMode::Stand) {
-                    control_mode_ = ControlMode::Policy;
-                    stand_transition_active_ = false;
-                    is_running_.store(false);
-                    RCLCPP_INFO(this->get_logger(), "Stand mode disabled");
-                } else {
-                    control_mode_ = ControlMode::Stand;
-                    is_interrupt_.store(false);
-                    is_motion_policy_.store(false);
-                    active_policy_idx_ = 0;
-                    start_stand_transition_locked();
-                    is_running_.store(true);
-                    RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
-                }
+                control_mode_ = ControlMode::Stand;
+                is_interrupt_.store(false);
+                is_motion_policy_.store(false);
+                active_policy_idx_ = 0;
+                start_stand_transition_locked();
+                is_running_.store(true);
+                RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
             }
         }
-        last_button_lsb_ = msg->buttons[kButtonLSB];
     }
+    last_button_lsb_ = button_lsb;
     if (has_motion_policy()) {
-        if (msg->buttons[kButtonRB] == 1 && msg->buttons[kButtonRB] != last_button5_) {
+        if (button_rb == 1 && button_rb != last_button5_) {
             std::unique_lock<std::mutex> lock(mode_mutex_);
             if (is_motion_policy_.load()) {
                 RCLCPP_WARN(this->get_logger(), "Cannot switch motion policy while in motion policy mode");
@@ -983,12 +1012,12 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 RCLCPP_INFO(this->get_logger(), "Selected policy: %s", policies_[motion_policy_indices_[current_motion_policy_idx_]].name.c_str());
             }
         }
-        last_button5_ = msg->buttons[kButtonRB];
+        last_button5_ = button_rb;
     }
-    last_button0_ = msg->buttons[kButtonX];
-    last_button1_ = msg->buttons[kButtonA];
-    last_button2_ = msg->buttons[kButtonB];
-    last_button3_ = msg->buttons[kButtonY];
+    last_button0_ = button_x;
+    last_button1_ = button_a;
+    last_button2_ = button_b;
+    last_button3_ = button_y;
 }
 
 void InferenceNode::subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::Twist> msg){

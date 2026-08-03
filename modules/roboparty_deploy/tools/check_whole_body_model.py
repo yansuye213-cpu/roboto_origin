@@ -10,6 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 INFERENCE_ROOT = ROOT / "src/inference"
 DEFAULT_CONFIG = INFERENCE_ROOT / "robots/rpo/configs/default.yaml"
+DEFAULT_ROBOT_DIR = INFERENCE_ROOT / "robots/rpo"
 
 
 def load_params(config_path):
@@ -24,7 +25,7 @@ def resolve_model_path(raw_path):
     model_path = Path(raw_path)
     if model_path.is_absolute():
         return model_path
-    return (INFERENCE_ROOT / model_path).resolve()
+    return (DEFAULT_ROBOT_DIR / model_path).resolve()
 
 
 def format_vector(values):
