@@ -97,10 +97,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="150"
-      velocity="12" />
+      lower="-1.445220"
+      upper="0.493057"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="left_leg_roll_link">
@@ -152,10 +152,10 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.382429"
+      upper="0.689517"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="left_leg_yaw_link">
@@ -207,10 +207,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.852707"
+      upper="0.862707"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="left_knee_link">
@@ -262,10 +262,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.171092"
+      upper="1.855307"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="left_ankle_pitch_link">
@@ -311,10 +311,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.2880"
+      upper="0.0790"
+      effort="97"
+      velocity="6.283185" />
   </joint>
   <link
     name="left_ankle_roll_link">
@@ -369,10 +369,10 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.0415"
+      upper="0.1290"
+      effort="97"
+      velocity="6.283185" />
   </joint>
   <link
     name="right_leg_pitch_link">
@@ -418,10 +418,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-1.444076"
+      upper="0.485809"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="right_leg_roll_link">
@@ -473,10 +473,10 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.700198"
+      upper="0.382048"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="right_leg_yaw_link">
@@ -528,10 +528,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.858130"
+      upper="0.869574"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="right_knee_link">
@@ -583,10 +583,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="0.061608"
+      upper="1.811818"
+      effort="120"
+      velocity="20.943951" />
   </joint>
   <link
     name="right_ankle_pitch_link">
@@ -632,10 +632,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.2745"
+      upper="0.1380"
+      effort="97"
+      velocity="6.283185" />
   </joint>
   <link
     name="right_ankle_roll_link">
@@ -690,10 +690,10 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-0.1080"
+      upper="0.0805"
+      effort="97"
+      velocity="6.283185" />
   </joint>
   <link
     name="left_shoulder_pitch_link">
@@ -739,10 +739,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-2.984856"
+      upper="1.637865"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="left_shoulder_roll_link">
@@ -788,10 +788,10 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="0.037576"
+      upper="2.176890"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="left_shoulder_yaw_link">
@@ -843,10 +843,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-1.550889"
+      upper="1.605822"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="left_elbow_pitch_link">
@@ -898,10 +898,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="0"
+      upper="1.576829"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="right_shoulder_pitch_link">
@@ -947,10 +947,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-3.385023"
+      upper="1.647783"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="right_shoulder_roll_link">
@@ -996,10 +996,10 @@
     <axis
       xyz="1 0 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-2.210078"
+      upper="0"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="right_shoulder_yaw_link">
@@ -1051,10 +1051,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-1.594759"
+      upper="1.635576"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="right_elbow_pitch_link">
@@ -1106,10 +1106,10 @@
     <axis
       xyz="0 1 0" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="0"
+      upper="1.584840"
+      effort="27"
+      velocity="10.471976" />
   </joint>
   <link
     name="head_yaw_link">
@@ -1161,9 +1161,9 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="-2"
-      upper="2"
-      effort="250"
-      velocity="12" />
+      lower="-1.510834"
+      upper="1.630999"
+      effort="27"
+      velocity="10.471976" />
   </joint>
 </robot>

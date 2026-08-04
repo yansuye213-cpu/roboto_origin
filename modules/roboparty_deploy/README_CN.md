@@ -745,3 +745,7 @@ position[17:21] 右手
 6. A 复位，确认机器人缓慢回默认位姿
 7. 确认 IMU 正常后，再考虑 B 推理或 LSB 站立模式
 ```
+cd ~/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+./tools/start_robot.sh --robot rpo --policy default
