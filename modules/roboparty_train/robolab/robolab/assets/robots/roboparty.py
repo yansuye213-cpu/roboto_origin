@@ -115,7 +115,7 @@ RPO_ACTION_MIRROR_SIGNS = [1, 1, -1, -1, -1, 1, 1, -1, -1, -1, -1, 1, 1, -1, -1,
 
 RPO_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
-        asset_path=f"{ISAAC_DATA_DIR}/robots/roboparty/rpo/urdf/rpo_21.urdf",
+        asset_path=f"{ISAAC_DATA_DIR}/robots/roboparty/rpo/urdf/Loobot722.urdf",
         fix_base=False,
         activate_contact_sensors=True,
         replace_cylinders_with_capsules=True,

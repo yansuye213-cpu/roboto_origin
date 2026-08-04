@@ -896,28 +896,40 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         }
     }
     if (button_x == 1 && button_x != last_button0_) {
-        if(is_running_.load()){
-            reset_runtime_state();
-            RCLCPP_INFO(this->get_logger(), "Inference paused");
-        }
-        if (robot_->is_init_.load()){
-            robot_->deinit_motors();
-            RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
-        } else {
-            robot_->init_motors();
-            RCLCPP_INFO(this->get_logger(), "Motors initialized");
+        try {
+            if(is_running_.load()){
+                reset_runtime_state();
+                RCLCPP_INFO(this->get_logger(), "Inference paused");
+            }
+            if (robot_->is_init_.load()){
+                robot_->deinit_motors();
+                RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
+            } else {
+                robot_->init_motors();
+                RCLCPP_INFO(this->get_logger(), "Motors initialized");
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed with an unknown error");
         }
     }
     if (button_a == 1 && button_a != last_button1_) {
-        if (is_running_.load()){
-            reset_runtime_state();
-            RCLCPP_INFO(this->get_logger(), "Inference paused");
-        }
-        if (!robot_->is_init_.load()){
-            RCLCPP_INFO(this->get_logger(), "Motors are not initialized!");
-        } else {
-            robot_->reset_joints(joint_default_angle_);
-            RCLCPP_INFO(this->get_logger(), "Motors reset");
+        try {
+            if (is_running_.load()){
+                reset_runtime_state();
+                RCLCPP_INFO(this->get_logger(), "Inference paused");
+            }
+            if (!robot_->is_init_.load()){
+                RCLCPP_INFO(this->get_logger(), "Motors are not initialized!");
+            } else {
+                robot_->reset_joints(joint_default_angle_);
+                RCLCPP_INFO(this->get_logger(), "Motors reset");
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Motor reset failed: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(), "Motor reset failed with an unknown error");
         }
     }
     if (button_b == 1 && button_b != last_button2_) {

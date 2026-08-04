@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Generate 21-DoF RPO MuJoCo XML from the current rpo_21 URDF."""
+"""Generate 21-DoF RPO MuJoCo XML from the current Loobot722 URDF."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROBO_LAB_ROOT = Path(__file__).resolve().parents[2]
 ASSET_PY = ROBO_LAB_ROOT / "robolab/assets/robots/roboparty.py"
-URDF_PATH = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/urdf/rpo_21.urdf"
+URDF_PATH = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/urdf/Loobot722.urdf"
 MJCF_DIR = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/mjcf"
 
 def _fmt(values: str | list[str]) -> str:
@@ -94,6 +94,7 @@ def _joint_info(joint: ET.Element) -> dict[str, str]:
         "euler": _fmt(_child(joint, "origin").attrib.get("rpy", "0 0 0")),
         "axis": _fmt(_child(joint, "axis").attrib["xyz"]),
         "range": _fmt([limit["lower"], limit["upper"]]),
+        "effort": limit["effort"],
     }
 
 
@@ -103,12 +104,6 @@ def _joint_class(joint_name: str) -> str:
     if "shoulder" in joint_name or "elbow" in joint_name:
         return "arm_joint_param"
     return "leg_joint_param"
-
-
-def _tau_limit(joint_name: str) -> float:
-    if "ankle" in joint_name or "shoulder" in joint_name or "elbow" in joint_name or joint_name == "head_yaw_joint":
-        return 27.0
-    return 120.0
 
 
 def _add_common(parent: ET.Element):
@@ -283,10 +278,10 @@ def _add_worldbody(
     _add_link_body(base, "base_link", links, joints, children_by_parent, joint_order)
 
 
-def _add_actuators(parent: ET.Element, joint_order: list[str]):
+def _add_actuators(parent: ET.Element, joint_order: list[str], joints: dict[str, dict[str, str]]):
     actuator = ET.SubElement(parent, "actuator")
     for joint_name in joint_order:
-        limit = _tau_limit(joint_name)
+        limit = float(joints[joint_name]["effort"])
         ET.SubElement(
             actuator,
             "motor",
@@ -334,7 +329,7 @@ def generate(path: Path, include_terrain: bool, include_stairs: bool = False):
     _add_common(mujoco)
     _add_assets(mujoco, links, include_terrain, include_stairs)
     _add_worldbody(mujoco, links, joints, children_by_parent, joint_order, include_terrain, include_stairs)
-    _add_actuators(mujoco, joint_order)
+    _add_actuators(mujoco, joint_order, joints)
     _add_sensors(mujoco, joint_order)
     visual = ET.SubElement(mujoco, "visual")
     ET.SubElement(visual, "global", offwidth="1920", offheight="1080")

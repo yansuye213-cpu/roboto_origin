@@ -91,23 +91,41 @@ done
 validate_name "robot" "$ROBOT"
 validate_name "policy" "$POLICY"
 
-# 函数：启动组件并检查（先启动ROS节点，再设置实时优先级）
+# 等待 ROS 2 发现节点，绕过可能陈旧的 daemon 缓存。
+wait_for_node() {
+    local node_name=$1
+    local timeout=${2:-15}
+    local deadline=$((SECONDS + timeout))
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if ros2 node list --no-daemon --spin-time 1 2>/dev/null | grep -Eq "/${node_name}$"; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    return 1
+}
+
+# 函数：启动组件并等待节点被 ROS 2 发现
 start_component() {
     local session_name=$1
     local launch_cmd=$2
     local node_name=$3
-    local sleep_time=$4
+    local startup_timeout=${4:-15}
 
     print_info "启动 $session_name ..."
     # 在screen会话中启动ROS命令，并确保传递DDS配置环境变量
     screen -dmS $session_name bash -c "source install/setup.bash; export RMW_IMPLEMENTATION='$RMW_IMPLEMENTATION'; export RMW_FASTRTPS_USE_QOS_FROM_XML='$RMW_FASTRTPS_USE_QOS_FROM_XML'; export FASTRTPS_DEFAULT_PROFILES_FILE='$FASTRTPS_DEFAULT_PROFILES_FILE'; $launch_cmd; exec bash"
-    sleep $sleep_time
 
-    if ! ros2 node list | grep -q "$node_name"; then
-        print_error "$session_name 启动失败！未检测到 $node_name 节点。"
+    print_info "等待 $node_name 节点（最多 ${startup_timeout} 秒）..."
+    if ! wait_for_node "$node_name" "$startup_timeout"; then
+        print_error "$session_name 启动失败！${startup_timeout} 秒内未检测到 $node_name 节点。"
         cleanup_sessions
         exit 1
     fi
+
+    print_success "$session_name 已启动，检测到 $node_name 节点。"
 }
 
 # 函数：清理所有会话
@@ -277,8 +295,8 @@ source install/setup.bash
 print_info "停止现有相关screen会话..."
 cleanup_sessions
 
-start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 5
-start_component "joy_session" "ros2 run joy joy_node" "joy_node" 2
+start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 15
+start_component "joy_session" "ros2 run joy joy_node" "joy_node" 15
 
 # 验证节点的 DDS 配置
 verify_dds_effectiveness

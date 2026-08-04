@@ -22,7 +22,7 @@ import yaml
 ROBO_LAB_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = ROBO_LAB_ROOT.parents[2]
 RPO_ASSET_PY = ROBO_LAB_ROOT / "robolab/assets/robots/roboparty.py"
-RPO_URDF = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/urdf/rpo_21.urdf"
+RPO_URDF = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/urdf/Loobot722.urdf"
 RPO_RETARGET_CFG = ROBO_LAB_ROOT / "scripts/tools/retarget/config/rpo.yaml"
 RPO_BM_DIR = ROBO_LAB_ROOT / "data/motions/rpo_bm"
 RPO_LAB_DIR = ROBO_LAB_ROOT / "data/motions/rpo_lab"
@@ -84,9 +84,9 @@ def check_robot_assets(reporter: Reporter) -> tuple[list[str], list[str], list[s
         reporter.error("RPO_ACTION_JOINT_NAMES must have 21 unique joints")
 
     if urdf_joints == xml_names:
-        reporter.ok("RPO_XML_JOINT_NAMES matches rpo_21.urdf joint order")
+        reporter.ok("RPO_XML_JOINT_NAMES matches Loobot722.urdf joint order")
     else:
-        reporter.error("RPO_XML_JOINT_NAMES does not match rpo_21.urdf joint order")
+        reporter.error("RPO_XML_JOINT_NAMES does not match Loobot722.urdf joint order")
 
     for label, names in {"action": action_names, "deploy": deploy_names, "xml": xml_names}.items():
         missing = sorted(set(names) - set(urdf_joints))
@@ -95,7 +95,7 @@ def check_robot_assets(reporter: Reporter) -> tuple[list[str], list[str], list[s
             reporter.error(f"{label} joints differ from URDF joints: missing={missing}, extra={extra}")
 
     if sorted(link_names) == sorted(urdf_links):
-        reporter.ok("RPO_LINKS matches rpo_21.urdf links")
+        reporter.ok("RPO_LINKS matches Loobot722.urdf links")
     else:
         reporter.error(
             f"RPO_LINKS differs from URDF links: "
@@ -105,15 +105,15 @@ def check_robot_assets(reporter: Reporter) -> tuple[list[str], list[str], list[s
 
     package_refs = [ref for ref in mesh_refs if ref.startswith("package://")]
     if package_refs:
-        reporter.error(f"rpo_21.urdf still contains package mesh refs: {sorted(set(package_refs))}")
+        reporter.error(f"Loobot722.urdf still contains package mesh refs: {sorted(set(package_refs))}")
     else:
-        reporter.ok("rpo_21.urdf uses local mesh paths")
+        reporter.ok("Loobot722.urdf uses local mesh paths")
 
     missing_meshes = sorted({ref for ref in mesh_refs if not (RPO_URDF.parent / ref).resolve().exists()})
     if missing_meshes:
-        reporter.error(f"rpo_21.urdf references missing meshes: {missing_meshes}")
+        reporter.error(f"Loobot722.urdf references missing meshes: {missing_meshes}")
     else:
-        reporter.ok("all rpo_21.urdf mesh references exist")
+        reporter.ok("all Loobot722.urdf mesh references exist")
 
     return action_names, deploy_names, xml_names, link_names
 
@@ -187,9 +187,9 @@ def check_motion_data(reporter: Reporter, action_names: list[str], body_names: l
         if "body_names" not in data.files:
             reporter.warn(f"{path.name}: missing body_names metadata; regenerate it with csv_to_npz.py")
         elif [str(name) for name in data["body_names"].tolist()] != body_names:
-            reporter.error(f"{path.name}: body_names metadata does not match rpo_21.urdf link order")
+            reporter.error(f"{path.name}: body_names metadata does not match Loobot722.urdf link order")
         else:
-            reporter.ok(f"{path.name}: body_names metadata matches rpo_21.urdf link order")
+            reporter.ok(f"{path.name}: body_names metadata matches Loobot722.urdf link order")
 
     if not check_lab:
         reporter.warn("Skipping rpo_lab pickle checks; pass --check-lab-motions to include them")
