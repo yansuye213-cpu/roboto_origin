@@ -365,6 +365,43 @@ void RobotInterface::refresh_joints() {
     }
 }
 
+std::vector<float> RobotInterface::sample_joint_q() {
+    if (!is_init_.load()) {
+        throw std::runtime_error("Motors not initialized");
+    }
+
+    std::unique_lock<std::mutex> lock(joint_mutex_);
+    exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
+        joint_q_[motor2urdf_[idx]] = motor->get_motor_pos() * robot_cfg_->motor_sign_[idx];
+        joint_vel_[motor2urdf_[idx]] = motor->get_motor_spd() * robot_cfg_->motor_sign_[idx];
+        joint_tau_[motor2urdf_[idx]] = motor->get_motor_current() * robot_cfg_->motor_sign_[idx];
+        if (motor->get_response_count() > offline_threshold_) {
+            throw std::runtime_error("Motor id " + std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
+        }
+    });
+    if (!close_chain_joint_idx_.empty() && ankle_decouple_) {
+        forward_close_chain();
+    }
+    return joint_q_;
+}
+
+std::string RobotInterface::joint_motor_label(size_t joint_idx) const {
+    if (joint_idx >= robot_cfg_->urdf2motor_.size()) {
+        return "unknown motor";
+    }
+    const size_t motor_idx = static_cast<size_t>(robot_cfg_->urdf2motor_[joint_idx]);
+    size_t bus_start = 0;
+    for (size_t bus = 0; bus < motors_cfg_->motor_num_.size(); ++bus) {
+        const size_t bus_count = static_cast<size_t>(motors_cfg_->motor_num_[bus]);
+        if (motor_idx < bus_start + bus_count) {
+            return motors_cfg_->motor_interface_[bus] + " ID" +
+                   std::to_string(motors_cfg_->motor_id_[motor_idx]);
+        }
+        bus_start += bus_count;
+    }
+    return "unknown motor";
+}
+
 void RobotInterface::set_zeros() {
     exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
         motor->set_motor_zero();

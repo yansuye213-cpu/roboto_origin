@@ -37,9 +37,11 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("policy_joint_signs", std::vector<double>{});
     this->declare_parameter<float>("policy_joint_limit_margin", 0.0);
+    this->declare_parameter<float>("joint_limit_check_tolerance", 0.005);
     this->declare_parameter<std::vector<double>>("reset_joint_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_joint_angle", std::vector<double>{});
     this->declare_parameter<float>("stand_transition_time", 1.5);
+    this->declare_parameter<float>("policy_transition_time", 2.0);
     this->declare_parameter<std::string>("stand_whole_body_model_path", "");
     this->declare_parameter<std::string>("stand_whole_body_base_link", "");
     this->declare_parameter<std::string>("stand_whole_body_left_foot_link", "");
@@ -228,9 +230,11 @@ void InferenceNode::load_config() {
     this->get_parameter("joint_default_angle", joint_default_angle_);
     this->get_parameter("policy_joint_signs", policy_joint_signs_);
     this->get_parameter("policy_joint_limit_margin", policy_joint_limit_margin_);
+    this->get_parameter("joint_limit_check_tolerance", joint_limit_check_tolerance_);
     this->get_parameter("reset_joint_angle", reset_joint_angle_);
     this->get_parameter("stand_joint_angle", stand_joint_angle_);
     this->get_parameter("stand_transition_time", stand_transition_time_);
+    this->get_parameter("policy_transition_time", policy_transition_time_);
     this->get_parameter("stand_whole_body_model_path", stand_stabilizer_config_.whole_body_model_path);
     this->get_parameter("stand_whole_body_base_link", stand_stabilizer_config_.whole_body_base_link);
     this->get_parameter("stand_whole_body_left_foot_link", stand_stabilizer_config_.whole_body_left_foot_link);
@@ -437,6 +441,12 @@ void InferenceNode::load_config() {
     }
     if (stand_transition_time_ <= 0.0f) {
         throw std::runtime_error("stand_transition_time must be positive");
+    }
+    if (policy_transition_time_ <= 0.0f) {
+        throw std::runtime_error("policy_transition_time must be positive");
+    }
+    if (joint_limit_check_tolerance_ < 0.0f) {
+        throw std::runtime_error("joint_limit_check_tolerance must be non-negative");
     }
     stand_stabilizer_config_.joint_num = joint_num_;
     stand_stabilizer_config_.dt = dt_;
@@ -718,9 +728,11 @@ void InferenceNode::load_config() {
     print_vector<double>("joint_default_angle", joint_default_angle_);
     print_vector<double>("policy_joint_signs", policy_joint_signs_);
     RCLCPP_INFO(this->get_logger(), "policy_joint_limit_margin: %f", policy_joint_limit_margin_);
+    RCLCPP_INFO(this->get_logger(), "joint_limit_check_tolerance: %f", joint_limit_check_tolerance_);
     print_vector<double>("reset_joint_angle", reset_joint_angle_);
     print_vector<double>("stand_joint_angle", stand_joint_angle_);
     RCLCPP_INFO(this->get_logger(), "stand_transition_time: %f", stand_transition_time_);
+    RCLCPP_INFO(this->get_logger(), "policy_transition_time: %f", policy_transition_time_);
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_model_path: %s", stand_stabilizer_config_.whole_body_model_path.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_base_link: %s", stand_stabilizer_config_.whole_body_base_link.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_left_foot_link: %s", stand_stabilizer_config_.whole_body_left_foot_link.c_str());
@@ -973,6 +985,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 RCLCPP_INFO(this->get_logger(), "Motors are not initialized!");
             } else {
                 robot_->reset_joints(reset_joint_angle_);
+                sync_action_reference(robot_->sample_joint_q());
                 RCLCPP_INFO(this->get_logger(), "Motors reset");
             }
         } catch (const std::exception& e) {
@@ -982,17 +995,33 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         }
     }
     if (button_b == 1 && button_b != last_button2_) {
-        if (!is_running_.load() && control_mode_ == ControlMode::Policy &&
-            (!active_policy().inference_enabled || !active_policy().ctx)) {
-            RCLCPP_WARN(this->get_logger(),
-                        "Cannot start policy mode: policy %s is disabled: %s. Use LSB for stand mode.",
-                        active_policy().name.c_str(),
-                        active_policy().disabled_reason.c_str());
-            last_button2_ = button_b;
-            return;
+        try {
+            if (!robot_->is_init_.load()) {
+                RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot toggle policy control");
+            } else {
+                const std::vector<float> current_joint_q = robot_->sample_joint_q();
+                std::unique_lock<std::mutex> lock(mode_mutex_);
+                if (control_mode_ == ControlMode::Policy && is_running_.load()) {
+                    enter_safe_stand_locked(current_joint_q);
+                    RCLCPP_INFO(this->get_logger(),
+                                "Policy paused; transitioning to and holding safe stand pose");
+                } else if (!active_policy().inference_enabled || !active_policy().ctx) {
+                    RCLCPP_WARN(this->get_logger(),
+                                "Cannot start policy mode: policy %s is disabled: %s. Use LSB for stand mode.",
+                                active_policy().name.c_str(),
+                                active_policy().disabled_reason.c_str());
+                } else {
+                    start_policy_transition_locked(current_joint_q);
+                    RCLCPP_INFO(this->get_logger(),
+                                "Policy started with %.2f s transition from current joint pose",
+                                policy_transition_time_);
+                }
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Policy control toggle failed: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(), "Policy control toggle failed with an unknown error");
         }
-        is_running_.store(!is_running_.load());
-        RCLCPP_INFO(this->get_logger(), "Control %s", is_running_.load() ? "started" : "paused");
     }
     if (button_y == 1 && button_y != last_button3_) {
         is_joy_control_.store(!is_joy_control_);
@@ -1049,20 +1078,27 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         if (!robot_->is_init_.load()) {
             RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot enter stand mode");
         } else {
-            std::unique_lock<std::mutex> lock(mode_mutex_);
-            if (control_mode_ == ControlMode::Stand) {
-                control_mode_ = ControlMode::Policy;
-                stand_transition_active_ = false;
-                is_running_.store(false);
-                RCLCPP_INFO(this->get_logger(), "Stand mode disabled");
-            } else {
-                control_mode_ = ControlMode::Stand;
-                is_interrupt_.store(false);
-                is_motion_policy_.store(false);
-                active_policy_idx_ = 0;
-                start_stand_transition_locked();
-                is_running_.store(true);
-                RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
+            try {
+                const std::vector<float> current_joint_q = robot_->sample_joint_q();
+                std::unique_lock<std::mutex> lock(mode_mutex_);
+                if (control_mode_ == ControlMode::Stand) {
+                    if (!active_policy().inference_enabled || !active_policy().ctx) {
+                        RCLCPP_WARN(this->get_logger(),
+                                    "Cannot leave stand mode for disabled policy %s: %s",
+                                    active_policy().name.c_str(),
+                                    active_policy().disabled_reason.c_str());
+                    } else {
+                        start_policy_transition_locked(current_joint_q);
+                        RCLCPP_INFO(this->get_logger(),
+                                    "Stand mode disabled; policy started with %.2f s transition",
+                                    policy_transition_time_);
+                    }
+                } else {
+                    enter_safe_stand_locked(current_joint_q);
+                    RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
+                }
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(this->get_logger(), "Stand mode toggle failed: %s", e.what());
             }
         }
     }
@@ -1163,6 +1199,7 @@ void InferenceNode::reset_joints_srv(const std::shared_ptr<std_srvs::srv::Trigge
     }
     try {
         robot_->reset_joints(reset_joint_angle_);
+        sync_action_reference(robot_->sample_joint_q());
         response->success = true;
         response->message = "Joints reset successfully";
     } catch (const std::exception& e) {
@@ -1281,6 +1318,9 @@ void InferenceNode::init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger
 void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     try {
+        if (is_running_.load()) {
+            reset_runtime_state();
+        }
         robot_->deinit_motors();
         response->success = true;
         response->message = "Motor deinit commands sent successfully";
@@ -1292,33 +1332,62 @@ void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigg
 
 void InferenceNode::start_inference_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                         std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    if (is_running_.load()) {
+    {
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        if (control_mode_ == ControlMode::Policy && is_running_.load()) {
+            response->success = false;
+            response->message = "Inference is already running!";
+            return;
+        }
+    }
+    if (!robot_->is_init_.load()) {
         response->success = false;
-        response->message = "Inference is already running!";
+        response->message = "Motors are not initialized";
         return;
     }
-    if (control_mode_ == ControlMode::Policy &&
-        (!active_policy().inference_enabled || !active_policy().ctx)) {
+    if (!active_policy().inference_enabled || !active_policy().ctx) {
         response->success = false;
         response->message =
             "Active policy is disabled: " + active_policy().disabled_reason;
         return;
     }
-    is_running_.store(true);
-    response->success = true;
-    response->message = "Inference started";
+    try {
+        const std::vector<float> current_joint_q = robot_->sample_joint_q();
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        start_policy_transition_locked(current_joint_q);
+        response->success = true;
+        response->message = "Inference started with smooth transition";
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = e.what();
+    }
 }
 
 void InferenceNode::stop_inference_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    if (!is_running_.load()) {
+    {
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        if (!is_running_.load() || control_mode_ != ControlMode::Policy) {
+            response->success = false;
+            response->message = "Policy is not running";
+            return;
+        }
+    }
+    if (!robot_->is_init_.load()) {
         response->success = false;
-        response->message = "Inference is already stopped!";
+        response->message = "Motors are not initialized";
         return;
     }
-    is_running_.store(false);
-    response->success = true;
-    response->message = "Inference stopped";
+    try {
+        const std::vector<float> current_joint_q = robot_->sample_joint_q();
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        enter_safe_stand_locked(current_joint_q);
+        response->success = true;
+        response->message = "Policy stopped; safe stand hold remains active";
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = e.what();
+    }
 }
 
 void InferenceNode::publish_joint_states() {

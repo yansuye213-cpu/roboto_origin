@@ -107,6 +107,47 @@ wait_for_node() {
     return 1
 }
 
+# 在启动 ROS 节点前验证四路电机 CAN，避免节点运行后才出现发送失败。
+check_can_interfaces() {
+    local interface
+    local details
+    local flags
+    local failed=0
+
+    if ! command -v ip &> /dev/null; then
+        print_error "未安装 ip 命令，无法检查 CAN 接口"
+        return 1
+    fi
+
+    for interface in can0 can1 can2 can3; do
+        if [ ! -d "/sys/class/net/$interface" ]; then
+            print_error "$interface 不存在"
+            failed=1
+            continue
+        fi
+
+        flags=$(cat "/sys/class/net/$interface/flags" 2>/dev/null)
+        details=$(ip -details link show "$interface" 2>/dev/null)
+        if [ -z "$flags" ] || [ $((flags & 1)) -eq 0 ]; then
+            print_error "$interface 未启动（DOWN）"
+            failed=1
+        elif ! printf '%s\n' "$details" | grep -q "bitrate 1000000"; then
+            print_error "$interface 波特率不是 1000000"
+            failed=1
+        elif printf '%s\n' "$details" | grep -q "can state BUS-OFF"; then
+            print_error "$interface 处于 BUS-OFF"
+            failed=1
+        else
+            print_success "$interface: UP, bitrate 1000000"
+        fi
+    done
+
+    if [ "$failed" -ne 0 ]; then
+        print_error "CAN 预检失败，请安装 assets/99-auto-up-devs-asus.rules 或先手动拉起四路 CAN。"
+        return 1
+    fi
+}
+
 # 函数：启动组件并等待节点被 ROS 2 发现
 start_component() {
     local session_name=$1
@@ -233,6 +274,9 @@ fi
 
 print_info "选择机器人: $ROBOT"
 print_info "选择策略: $POLICY"
+
+print_info "检查电机 CAN 接口..."
+check_can_interfaces || exit 1
 
 # 设置 DDS 配置文件
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp

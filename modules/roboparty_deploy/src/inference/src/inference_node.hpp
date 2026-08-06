@@ -229,7 +229,7 @@ class InferenceNode : public rclcpp::Node {
     float dt_;
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
         obs_scales_gravity_b_, clip_observations_;
-    float action_scale_, clip_actions_, policy_joint_limit_margin_;
+    float action_scale_, clip_actions_, policy_joint_limit_margin_, joint_limit_check_tolerance_;
     double joy_timeout_sec_;
     std::vector<double> clip_cmd_, joint_default_angle_, policy_joint_signs_, reset_joint_angle_, stand_joint_angle_, joint_limits_;
     std::vector<long int> usd2urdf_;
@@ -237,9 +237,13 @@ class InferenceNode : public rclcpp::Node {
     float stand_transition_time_;
     float stand_transition_elapsed_ = 0.0f;
     bool stand_transition_active_ = false;
+    float policy_transition_time_;
+    float policy_transition_elapsed_ = 0.0f;
+    bool policy_transition_active_ = false;
     StandingStabilizer::Config stand_stabilizer_config_;
     std::unique_ptr<StandingStabilizer> stand_stabilizer_;
     std::vector<float> stand_start_action_;
+    std::vector<float> policy_start_action_;
     std::vector<float> stand_kp_, stand_kd_;
     int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0;
     std::atomic<int64_t> last_joy_message_ns_{0};
@@ -263,6 +267,9 @@ class InferenceNode : public rclcpp::Node {
     void apply_action();
     void apply_stand_action();
     void start_stand_transition_locked();
+    void start_policy_transition_locked(const std::vector<float>& current_joint_q);
+    void enter_safe_stand_locked(const std::vector<float>& current_joint_q);
+    void sync_action_reference(const std::vector<float>& joint_q);
     PolicyRuntime& active_policy();
     const PolicyRuntime& active_policy() const;
 

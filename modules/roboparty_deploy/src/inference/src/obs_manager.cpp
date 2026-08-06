@@ -180,11 +180,33 @@ void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
             (joint_pos_buffer_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) *
             obs_scales_dof_pos_;
     }
-    for(size_t i = 0; i < joint_limits_.size() / 2; i++){
-        if(joint_pos_buffer_[i] < joint_limits_[i * 2] || joint_pos_buffer_[i] > joint_limits_[i * 2 + 1]){
-            RCLCPP_FATAL(this->get_logger(), "Joint %zu out of limit! Shutting down...", i+1);
+    for (size_t i = 0; i < joint_limits_.size() / 2; i++) {
+        const double lower = joint_limits_[i * 2];
+        const double upper = joint_limits_[i * 2 + 1];
+        const double measured = joint_pos_buffer_[i];
+        const std::string joint_name =
+            i < stand_stabilizer_config_.whole_body_joint_order.size()
+                ? stand_stabilizer_config_.whole_body_joint_order[i]
+                : "joint_" + std::to_string(i + 1);
+        const std::string motor_label = robot_->joint_motor_label(i);
+        if (measured < lower - joint_limit_check_tolerance_ ||
+            measured > upper + joint_limit_check_tolerance_) {
+            RCLCPP_FATAL(
+                this->get_logger(),
+                "Joint %zu (%s, %s) feedback %.6f outside [%.6f, %.6f] "
+                "with %.6f rad tolerance; shutting down",
+                i + 1, joint_name.c_str(), motor_label.c_str(), measured, lower, upper,
+                joint_limit_check_tolerance_);
             rclcpp::shutdown();
             throw std::runtime_error("Joint out of limit");
+        }
+        if (measured < lower || measured > upper) {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Joint %zu (%s, %s) feedback %.6f slightly outside [%.6f, %.6f] "
+                "but within %.6f rad measurement tolerance",
+                i + 1, joint_name.c_str(), motor_label.c_str(), measured, lower, upper,
+                joint_limit_check_tolerance_);
         }
     }
 }

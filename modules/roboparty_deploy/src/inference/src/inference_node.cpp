@@ -159,6 +159,8 @@ void InferenceNode::reset_runtime_state() {
         control_mode_ = ControlMode::Policy;
         stand_transition_elapsed_ = 0.0f;
         stand_transition_active_ = false;
+        policy_transition_elapsed_ = 0.0f;
+        policy_transition_active_ = false;
     }
     {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
@@ -216,6 +218,7 @@ void InferenceNode::initialize_runtime_state() {
     act_.assign(joint_num_, 0.0f);
     last_act_.assign(joint_num_, 0.0f);
     stand_start_action_.assign(joint_num_, 0.0f);
+    policy_start_action_.assign(joint_num_, 0.0f);
     joint_pos_buffer_.assign(joint_num_, 0.0f);
     joint_vel_buffer_.assign(joint_num_, 0.0f);
     joint_torques_buffer_.assign(joint_num_, 0.0f);
@@ -268,6 +271,52 @@ void InferenceNode::start_stand_transition_locked() {
     for (int i = 0; i < joint_num_; i++) {
         stand_start_action_[i] = last_act_[i];
     }
+}
+
+void InferenceNode::sync_action_reference(const std::vector<float>& joint_q) {
+    if (joint_q.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("Joint feedback size does not match joint_num");
+    }
+    std::unique_lock<std::mutex> lock(act_mutex_);
+    act_ = joint_q;
+    last_act_ = joint_q;
+}
+
+void InferenceNode::start_policy_transition_locked(const std::vector<float>& current_joint_q) {
+    if (current_joint_q.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("Joint feedback size does not match joint_num");
+    }
+    control_mode_ = ControlMode::Policy;
+    stand_transition_active_ = false;
+    policy_transition_elapsed_ = 0.0f;
+    policy_transition_active_ = true;
+    policy_start_action_ = current_joint_q;
+    reset_policy_runtime(active_policy());
+    {
+        std::unique_lock<std::mutex> lock(act_mutex_);
+        act_ = current_joint_q;
+        last_act_ = current_joint_q;
+    }
+    {
+        std::unique_lock<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+    is_running_.store(true);
+}
+
+void InferenceNode::enter_safe_stand_locked(const std::vector<float>& current_joint_q) {
+    sync_action_reference(current_joint_q);
+    control_mode_ = ControlMode::Stand;
+    policy_transition_active_ = false;
+    is_interrupt_.store(false);
+    is_motion_policy_.store(false);
+    active_policy_idx_ = 0;
+    {
+        std::unique_lock<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+    start_stand_transition_locked();
+    is_running_.store(true);
 }
 
 void InferenceNode::apply_stand_action() {
@@ -390,24 +439,40 @@ void InferenceNode::apply_stand_action() {
 }
 
 void InferenceNode::apply_action() {
-    if(!is_running_.load() || !robot_->is_init_.load()){
+    if (!is_running_.load() || !robot_->is_init_.load()) {
         return;
     }
-    {
-        std::unique_lock<std::mutex> mode_lock(mode_mutex_);
-        if (control_mode_ == ControlMode::Stand) {
-            mode_lock.unlock();
-            apply_stand_action();
-            return;
+    float policy_blend = 1.0f;
+    bool policy_transition = false;
+    std::vector<float> command;
+    std::unique_lock<std::mutex> mode_lock(mode_mutex_);
+    if (control_mode_ == ControlMode::Stand) {
+        mode_lock.unlock();
+        apply_stand_action();
+        return;
+    }
+    if (policy_transition_active_) {
+        policy_transition_elapsed_ += dt_;
+        const float duration = std::max(policy_transition_time_, dt_);
+        policy_blend = std::clamp(policy_transition_elapsed_ / duration, 0.0f, 1.0f);
+        policy_blend = policy_blend * policy_blend * (3.0f - 2.0f * policy_blend);
+        policy_transition = true;
+        if (policy_transition_elapsed_ >= duration) {
+            policy_transition_active_ = false;
         }
     }
     {
         std::unique_lock<std::mutex> lock(act_mutex_);
         for (size_t i = 0; i < act_.size(); i++) {
-            last_act_[i] = act_alpha_ * act_[i] + (1 - act_alpha_) * last_act_[i];
+            const float policy_target = act_alpha_ * act_[i] + (1 - act_alpha_) * last_act_[i];
+            last_act_[i] = policy_transition
+                ? policy_start_action_[i] + policy_blend * (policy_target - policy_start_action_[i])
+                : policy_target;
         }
+        command = last_act_;
     }
-    robot_->apply_action(last_act_);
+    mode_lock.unlock();
+    robot_->apply_action(command);
 }
 
 void InferenceNode::control() {
@@ -458,70 +523,77 @@ void InferenceNode::inference() {
 
         try {
             std::unique_lock<std::mutex> mode_lock(mode_mutex_);
-            if (control_mode_ == ControlMode::Stand) {
+            if (control_mode_ != ControlMode::Policy) {
                 mode_lock.unlock();
-            std::this_thread::sleep_for(period);
-            continue;
-        }
-        auto& policy = active_policy();
-        if (!policy.inference_enabled || !policy.ctx) {
-            RCLCPP_ERROR_THROTTLE(
-                this->get_logger(), *this->get_clock(), 1000,
-                "Active policy %s is disabled: %s",
-                policy.name.c_str(), policy.disabled_reason.c_str());
-            is_running_.store(false);
-            mode_lock.unlock();
-            std::this_thread::sleep_for(period);
-            continue;
-        }
-        update_obs_segments(policy.obs_segments, policy.obs_layout);
-        publish_imu();
-        publish_joint_states();
-        flatten_obs_segments(policy.obs_segments, policy.obs.begin());
-
-        std::transform(policy.obs.begin(), policy.obs.end(), policy.obs.begin(), [this](float val) {
-            return std::clamp(val, -clip_observations_, clip_observations_);
-        });
-
-        update_stacked_obs(policy.ctx->input_buffer, policy.obs, policy.obs_num, policy.frame_stack,
-                            policy.stack_order, policy.obs_layout_sizes, policy.is_first_frame);
-        if(policy.extra_obs_num > 0){
-            update_obs_segments(policy.extra_obs_segments, policy.extra_obs_layout);
-            flatten_obs_segments(policy.extra_obs_segments, policy.ctx->input_buffer.begin() + policy.frame_stack * policy.obs_num);
-        }
-        if (policy.motion_loader) {
-            step_motion_frame();
-        }
-        policy.is_first_frame = false;
-
-        policy.ctx->session->Run(Ort::RunOptions{nullptr},
-            policy.ctx->input_names_raw.data(), policy.ctx->input_tensor.get(), policy.ctx->num_inputs,
-            policy.ctx->output_names_raw.data(), policy.ctx->output_tensor.get(), policy.ctx->num_outputs);
-
-        {
-            std::unique_lock<std::mutex> lock(act_mutex_);
-            size_t clamped_joint_count = 0;
-            for (size_t i = 0; i < usd2urdf_.size(); i++) {
-                const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
-                const float action = std::clamp(policy.ctx->output_buffer[i], -clip_actions_, clip_actions_);
-                float target = static_cast<float>(
-                    policy_joint_signs_[i] * action * action_scale_ + joint_default_angle_[joint_idx]);
-                if (!joint_limits_.empty()) {
-                    const float lower = static_cast<float>(joint_limits_[joint_idx * 2]) + policy_joint_limit_margin_;
-                    const float upper = static_cast<float>(joint_limits_[joint_idx * 2 + 1]) - policy_joint_limit_margin_;
-                    const float clamped_target = std::clamp(target, lower, upper);
-                    clamped_joint_count += clamped_target != target ? 1 : 0;
-                    target = clamped_target;
-                }
-                act_[joint_idx] = target;
+                std::this_thread::sleep_for(period);
+                continue;
             }
-            if (clamped_joint_count > 0) {
-                RCLCPP_WARN_THROTTLE(
+            auto& policy = active_policy();
+            if (!policy.inference_enabled || !policy.ctx) {
+                RCLCPP_ERROR_THROTTLE(
                     this->get_logger(), *this->get_clock(), 1000,
-                    "Policy targets clamped by mechanical limits for %zu joint(s)",
-                    clamped_joint_count);
+                    "Active policy %s is disabled: %s",
+                    policy.name.c_str(), policy.disabled_reason.c_str());
+                is_running_.store(false);
+                mode_lock.unlock();
+                std::this_thread::sleep_for(period);
+                continue;
             }
-                if(supports_interrupt() && is_interrupt_.load()){
+            update_obs_segments(policy.obs_segments, policy.obs_layout);
+            publish_imu();
+            publish_joint_states();
+            flatten_obs_segments(policy.obs_segments, policy.obs.begin());
+
+            std::transform(policy.obs.begin(), policy.obs.end(), policy.obs.begin(), [this](float val) {
+                return std::clamp(val, -clip_observations_, clip_observations_);
+            });
+
+            update_stacked_obs(policy.ctx->input_buffer, policy.obs, policy.obs_num, policy.frame_stack,
+                               policy.stack_order, policy.obs_layout_sizes, policy.is_first_frame);
+            if (policy.extra_obs_num > 0) {
+                update_obs_segments(policy.extra_obs_segments, policy.extra_obs_layout);
+                flatten_obs_segments(
+                    policy.extra_obs_segments,
+                    policy.ctx->input_buffer.begin() + policy.frame_stack * policy.obs_num);
+            }
+            if (policy.motion_loader) {
+                step_motion_frame();
+            }
+            policy.is_first_frame = false;
+
+            policy.ctx->session->Run(
+                Ort::RunOptions{nullptr},
+                policy.ctx->input_names_raw.data(), policy.ctx->input_tensor.get(), policy.ctx->num_inputs,
+                policy.ctx->output_names_raw.data(), policy.ctx->output_tensor.get(), policy.ctx->num_outputs);
+
+            {
+                std::unique_lock<std::mutex> lock(act_mutex_);
+                size_t clamped_joint_count = 0;
+                for (size_t i = 0; i < usd2urdf_.size(); i++) {
+                    const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
+                    const float action =
+                        std::clamp(policy.ctx->output_buffer[i], -clip_actions_, clip_actions_);
+                    float target = static_cast<float>(
+                        policy_joint_signs_[i] * action * action_scale_ +
+                        joint_default_angle_[joint_idx]);
+                    if (!joint_limits_.empty()) {
+                        const float lower = static_cast<float>(joint_limits_[joint_idx * 2]) +
+                                            policy_joint_limit_margin_;
+                        const float upper = static_cast<float>(joint_limits_[joint_idx * 2 + 1]) -
+                                            policy_joint_limit_margin_;
+                        const float clamped_target = std::clamp(target, lower, upper);
+                        clamped_joint_count += clamped_target != target ? 1 : 0;
+                        target = clamped_target;
+                    }
+                    act_[joint_idx] = target;
+                }
+                if (clamped_joint_count > 0) {
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 1000,
+                        "Policy targets clamped by mechanical limits for %zu joint(s)",
+                        clamped_joint_count);
+                }
+                if (supports_interrupt() && is_interrupt_.load()) {
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);
                     for (size_t i = 0; i < interrupt_action_.size(); i++) {
                         act_[act_.size() - interrupt_action_.size() + i] = interrupt_action_[i];

@@ -56,6 +56,8 @@ class RobotInterface {
     void set_zeros();
     void clear_errors();
     void refresh_joints();
+    std::vector<float> sample_joint_q();
+    std::string joint_motor_label(size_t joint_idx) const;
     std::vector<float> get_joint_q() {
         if (!is_init_.load()) {
             throw std::runtime_error("Motors not initialized");

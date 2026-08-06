@@ -309,10 +309,10 @@ screen -S joy_session -X quit
 
 - **X 键**: 使能 / 失能电机
 - **A 键**: 复位电机
-- **B 键**: 开始 / 暂停推理
+- **B 键**: 平滑开始策略控制 / 平滑回到并持续保持安全站姿
 - **Y 键**: 切换手柄控制 / cmd_vel 指令控制
 - **LB 键**: 切换策略模式（在 beyondmimic / interrupt 模式下可用）
-- **LSB（左摇杆按下）**: 进入 / 退出站立模式
+- **LSB（左摇杆按下）**: 在站立模式与策略控制之间平滑切换
 - **RB 键**: 切换运动序列（在 beyondmimic 模式下可用）
 - **右摇杆**: 控制前后左右移动
 - **LT/RT**: 控制转向（左 / 右旋转）
@@ -545,12 +545,15 @@ done
 安装当前电脑专用 udev 规则：
 
 ```bash
-sudo cp assets/99-auto-up-devs-yansuye-legion.rules /etc/udev/rules.d/
-sudo rm -f /etc/udev/rules.d/99-auto-up-devs-orangepi.rules
-sudo rm -f /etc/udev/rules.d/99-auto-up-devs-sunrise.rules
+sudo install -m 0644 assets/99-auto-up-devs-asus.rules \
+  /etc/udev/rules.d/99-auto-up-devs-asus.rules
 sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo udevadm trigger --subsystem-match=net --action=add
+sudo udevadm settle
 ```
+
+该规则使用四个 USB-CAN 适配器的唯一序列号固定映射 `can0` 到
+`can3`，不依赖可能在重启后变化的 USB 总线编号。
 
 临时给 IMU 串口权限：
 
@@ -604,11 +607,11 @@ ros2 topic echo /joy --once
 当前手柄映射：
 
 - `A`: 复位到 `reset_joint_angle`（未配置时兼容回退到 `joint_default_angle`）
-- `B`: 开始 / 暂停推理
+- `B`: 从当前关节姿态平滑进入策略控制 / 平滑回到并持续保持 `stand_joint_angle`
 - `X`: 使能 / 失能电机
 - `Y`: 切换手柄控制 / `/cmd_vel`
 - `LB`: 切换策略模式
-- `LSB`（左摇杆按下）: 进入 / 退出站立模式
+- `LSB`（左摇杆按下）: 在站立模式与策略控制之间平滑切换
 - `RB`: 切换运动序列
 
 首次验证默认位姿时，只使用：
@@ -671,12 +674,17 @@ ros2 service call /read_imu std_srvs/srv/Trigger
 ros2 topic echo /imu --once
 ```
 
-开始 / 停止推理：
+开始策略控制 / 回到安全站姿：
 
 ```bash
 ros2 service call /start_inference std_srvs/srv/Trigger
 ros2 service call /stop_inference std_srvs/srv/Trigger
 ```
+
+`start_inference` 使用 `policy_transition_time` 从当前实测关节姿态平滑接入策略。
+`stop_inference` 不停止电机控制，而是使用 `stand_transition_time` 平滑回到
+`stand_joint_angle` 并持续保持。`X` 或 `deinit_motors` 会直接失能电机，只能在
+机器人有悬吊或人工支撑时使用。
 
 ### 6. CAN 电机回包调试
 
@@ -733,6 +741,10 @@ position[12]    头
 position[13:17] 左手
 position[17:21] 右手
 ```
+
+`joint_limit_check_tolerance` 只用于吸收编码器回读的微小量化误差，不改变
+URDF 限位，也不放宽策略目标夹紧范围。越界超过该容差时，日志会同时打印
+关节名、CAN 接口、电机 ID、实测角度和上下限。
 
 ### 8. 安全验证顺序
 
