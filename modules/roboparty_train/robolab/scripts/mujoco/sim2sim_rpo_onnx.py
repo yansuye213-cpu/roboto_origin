@@ -102,8 +102,18 @@ LOCOMOTION_DEFAULT_POS_POLICY = np.array(
     ],
     dtype=np.double,
 )
+LOCOMOTION_POLICY_SIGNS = np.array(
+    [
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+        -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0,
+    ],
+    dtype=np.double,
+)
 LOCOMOTION_DEFAULT_POS_MJCF = np.zeros(len(LOCOMOTION_POLICY_JOINT_NAMES), dtype=np.double)
-LOCOMOTION_DEFAULT_POS_MJCF[LOCOMOTION_POLICY_TO_MJCF] = LOCOMOTION_DEFAULT_POS_POLICY
+LOCOMOTION_DEFAULT_POS_MJCF[LOCOMOTION_POLICY_TO_MJCF] = (
+    LOCOMOTION_POLICY_SIGNS * LOCOMOTION_DEFAULT_POS_POLICY
+)
 
 
 class cmd:
@@ -203,8 +213,8 @@ def run_mujoco(policy, cfg, headless=False, no_video=False):
             dq_obs = np.zeros((cfg.robot_config.num_actions), dtype=np.double)
             q_ = q - cfg.robot_config.default_pos
             for i in range(len(cfg.robot_config.usd2urdf)):
-                q_obs[i] = q_[cfg.robot_config.usd2urdf[i]]
-                dq_obs[i] = dq[cfg.robot_config.usd2urdf[i]]
+                q_obs[i] = cfg.robot_config.policy_joint_signs[i] * q_[cfg.robot_config.usd2urdf[i]]
+                dq_obs[i] = cfg.robot_config.policy_joint_signs[i] * dq[cfg.robot_config.usd2urdf[i]]
 
             obs = np.zeros([1, cfg.robot_config.num_single_obs], dtype=np.float32)
             
@@ -246,8 +256,16 @@ def run_mujoco(policy, cfg, headless=False, no_video=False):
                 action, -cfg.robot_config.clip_actions, cfg.robot_config.clip_actions
             ) * cfg.robot_config.action_scale
             for i in range(len(cfg.robot_config.usd2urdf)):
-                target_pos[cfg.robot_config.usd2urdf[i]] = target_q[i]
+                target_pos[cfg.robot_config.usd2urdf[i]] = (
+                    cfg.robot_config.policy_joint_signs[i] * target_q[i]
+                )
             target_pos = target_pos + cfg.robot_config.default_pos
+            joint_ranges = model.jnt_range[-cfg.robot_config.num_actions :]
+            target_pos = np.clip(
+                target_pos,
+                joint_ranges[:, 0] + cfg.robot_config.joint_limit_margin,
+                joint_ranges[:, 1] - cfg.robot_config.joint_limit_margin,
+            )
 
             # --- Capture actual state at this low-frequency step ---
             # Note: q, v, omega were just computed by get_obs() for the current simulation step
@@ -427,6 +445,8 @@ if __name__ == '__main__':
             clip_observations = 100.0
             clip_actions = 100.0
             usd2urdf = LOCOMOTION_POLICY_TO_MJCF
+            policy_joint_signs = LOCOMOTION_POLICY_SIGNS
+            joint_limit_margin = 0.0
 
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name

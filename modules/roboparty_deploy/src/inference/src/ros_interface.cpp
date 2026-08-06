@@ -33,7 +33,11 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("clip_actions", 18.0);
     this->declare_parameter<std::vector<long int>>("usd2urdf", std::vector<long int>{});
     this->declare_parameter<std::vector<double>>("clip_cmd", std::vector<double>{});
+    this->declare_parameter<double>("joy_timeout_sec", 0.5);
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("policy_joint_signs", std::vector<double>{});
+    this->declare_parameter<float>("policy_joint_limit_margin", 0.0);
+    this->declare_parameter<std::vector<double>>("reset_joint_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_joint_angle", std::vector<double>{});
     this->declare_parameter<float>("stand_transition_time", 1.5);
     this->declare_parameter<std::string>("stand_whole_body_model_path", "");
@@ -220,7 +224,11 @@ void InferenceNode::load_config() {
     this->get_parameter("clip_actions", clip_actions_);
     this->get_parameter("usd2urdf", usd2urdf_);
     this->get_parameter("clip_cmd", clip_cmd_);
+    this->get_parameter("joy_timeout_sec", joy_timeout_sec_);
     this->get_parameter("joint_default_angle", joint_default_angle_);
+    this->get_parameter("policy_joint_signs", policy_joint_signs_);
+    this->get_parameter("policy_joint_limit_margin", policy_joint_limit_margin_);
+    this->get_parameter("reset_joint_angle", reset_joint_angle_);
     this->get_parameter("stand_joint_angle", stand_joint_angle_);
     this->get_parameter("stand_transition_time", stand_transition_time_);
     this->get_parameter("stand_whole_body_model_path", stand_stabilizer_config_.whole_body_model_path);
@@ -398,6 +406,29 @@ void InferenceNode::load_config() {
     if (joint_default_angle_.size() != static_cast<size_t>(joint_num_)) {
         throw std::runtime_error("joint_default_angle must have the same size as joint_num");
     }
+    if (policy_joint_signs_.empty()) {
+        policy_joint_signs_.assign(joint_num_, 1.0);
+    }
+    if (policy_joint_signs_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("policy_joint_signs must be empty or have the same size as joint_num");
+    }
+    for (size_t i = 0; i < policy_joint_signs_.size(); ++i) {
+        if (policy_joint_signs_[i] != -1.0 && policy_joint_signs_[i] != 1.0) {
+            throw std::runtime_error("policy_joint_signs[" + std::to_string(i) + "] must be -1 or 1");
+        }
+    }
+    if (policy_joint_limit_margin_ < 0.0f) {
+        throw std::runtime_error("policy_joint_limit_margin must be non-negative");
+    }
+    if (reset_joint_angle_.empty()) {
+        reset_joint_angle_ = joint_default_angle_;
+    }
+    if (reset_joint_angle_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("reset_joint_angle must be empty or have the same size as joint_num");
+    }
+    if (joy_timeout_sec_ < 0.0) {
+        throw std::runtime_error("joy_timeout_sec must be non-negative");
+    }
     if (stand_joint_angle_.empty()) {
         stand_joint_angle_ = joint_default_angle_;
     }
@@ -544,6 +575,12 @@ void InferenceNode::load_config() {
         if (!joint_limits_.empty()) {
             const double lower = joint_limits_[i * 2];
             const double upper = joint_limits_[i * 2 + 1];
+            if (lower + policy_joint_limit_margin_ > upper - policy_joint_limit_margin_) {
+                throw std::runtime_error("policy_joint_limit_margin leaves no range for joint " + std::to_string(i));
+            }
+            if (reset_joint_angle_[i] < lower || reset_joint_angle_[i] > upper) {
+                throw std::runtime_error("reset_joint_angle[" + std::to_string(i) + "] is out of joint range");
+            }
             if (stand_joint_angle_[i] < lower || stand_joint_angle_[i] > upper) {
                 throw std::runtime_error("stand_joint_angle[" + std::to_string(i) + "] is out of joint range");
             }
@@ -677,7 +714,11 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "clip_actions: %f", clip_actions_);
     print_vector<long int>("usd2urdf", usd2urdf_);
     print_vector<double>("clip_cmd", clip_cmd_);
+    RCLCPP_INFO(this->get_logger(), "joy_timeout_sec: %f", joy_timeout_sec_);
     print_vector<double>("joint_default_angle", joint_default_angle_);
+    print_vector<double>("policy_joint_signs", policy_joint_signs_);
+    RCLCPP_INFO(this->get_logger(), "policy_joint_limit_margin: %f", policy_joint_limit_margin_);
+    print_vector<double>("reset_joint_angle", reset_joint_angle_);
     print_vector<double>("stand_joint_angle", stand_joint_angle_);
     RCLCPP_INFO(this->get_logger(), "stand_transition_time: %f", stand_transition_time_);
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_model_path: %s", stand_stabilizer_config_.whole_body_model_path.c_str());
@@ -848,6 +889,14 @@ void InferenceNode::load_config() {
 }
 
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    last_joy_message_ns_.store(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),
+        std::memory_order_relaxed);
+    if (joy_watchdog_timed_out_.exchange(false)) {
+        RCLCPP_INFO(this->get_logger(), "Joystick connection restored");
+    }
+
     constexpr size_t kButtonA = 0;
     constexpr size_t kButtonB = 1;
     constexpr size_t kButtonY = 2;
@@ -923,7 +972,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             if (!robot_->is_init_.load()){
                 RCLCPP_INFO(this->get_logger(), "Motors are not initialized!");
             } else {
-                robot_->reset_joints(joint_default_angle_);
+                robot_->reset_joints(reset_joint_angle_);
                 RCLCPP_INFO(this->get_logger(), "Motors reset");
             }
         } catch (const std::exception& e) {
@@ -947,6 +996,10 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (button_y == 1 && button_y != last_button3_) {
         is_joy_control_.store(!is_joy_control_);
+        {
+            std::unique_lock<std::mutex> lock(cmd_mutex_);
+            std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        }
         RCLCPP_INFO(this->get_logger(), "Controlled by %s", is_joy_control_.load() ? "joy" : "/cmd_vel");
     }
     if (supports_interrupt() || has_motion_policy()) {
@@ -1032,6 +1085,34 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     last_button3_ = button_y;
 }
 
+void InferenceNode::check_joy_watchdog() {
+    if (!is_joy_control_.load() || joy_timeout_sec_ == 0.0) {
+        return;
+    }
+    const int64_t last_message_ns = last_joy_message_ns_.load(std::memory_order_relaxed);
+    if (last_message_ns == 0) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const int64_t now_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    const double elapsed_sec = static_cast<double>(now_ns - last_message_ns) * 1e-9;
+    if (elapsed_sec <= joy_timeout_sec_) {
+        return;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+    if (!joy_watchdog_timed_out_.exchange(true)) {
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Joystick timeout after %.3f s; velocity command reset to zero",
+            elapsed_sec);
+    }
+}
+
 void InferenceNode::subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::Twist> msg){
     if(!is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
@@ -1081,7 +1162,7 @@ void InferenceNode::reset_joints_srv(const std::shared_ptr<std_srvs::srv::Trigge
         return;
     }
     try {
-        robot_->reset_joints(joint_default_angle_);
+        robot_->reset_joints(reset_joint_angle_);
         response->success = true;
         response->message = "Joints reset successfully";
     } catch (const std::exception& e) {

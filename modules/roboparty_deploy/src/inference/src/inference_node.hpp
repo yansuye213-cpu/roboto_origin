@@ -146,6 +146,9 @@ class InferenceNode : public rclcpp::Node {
         auto data_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
         joy_subscription_ = this->create_subscription<sensor_msgs::msg::Joy>(
             "/joy", data_qos, std::bind(&InferenceNode::subs_joy_callback, this, std::placeholders::_1));
+        joy_watchdog_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(50),
+            std::bind(&InferenceNode::check_joy_watchdog, this));
         cmd_subscription_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", data_qos, std::bind(&InferenceNode::subs_cmd_callback,this, std::placeholders::_1
         ));
@@ -213,6 +216,7 @@ class InferenceNode : public rclcpp::Node {
     int intra_threads_;
     Ort::AllocatorWithDefaultOptions allocator_;
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_subscription_;
+    rclcpp::TimerBase::SharedPtr joy_watchdog_timer_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_subscription_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr elevation_subscription_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_subscription_;
@@ -225,8 +229,9 @@ class InferenceNode : public rclcpp::Node {
     float dt_;
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
         obs_scales_gravity_b_, clip_observations_;
-    float action_scale_, clip_actions_;
-    std::vector<double> clip_cmd_, joint_default_angle_, stand_joint_angle_, joint_limits_;
+    float action_scale_, clip_actions_, policy_joint_limit_margin_;
+    double joy_timeout_sec_;
+    std::vector<double> clip_cmd_, joint_default_angle_, policy_joint_signs_, reset_joint_angle_, stand_joint_angle_, joint_limits_;
     std::vector<long int> usd2urdf_;
     float gravity_z_upper_;
     float stand_transition_time_;
@@ -237,6 +242,8 @@ class InferenceNode : public rclcpp::Node {
     std::vector<float> stand_start_action_;
     std::vector<float> stand_kp_, stand_kd_;
     int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0;
+    std::atomic<int64_t> last_joy_message_ns_{0};
+    std::atomic<bool> joy_watchdog_timed_out_{false};
     std::vector<PolicyRuntime> policies_;
     std::vector<int> motion_policy_indices_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_joints_service_, set_zeros_service_, clear_errors_service_, refresh_joints_service_, read_joints_service_, read_imu_service_, init_motors_service_, deinit_motors_service_, start_inference_service_, stop_inference_service_;
@@ -247,6 +254,7 @@ class InferenceNode : public rclcpp::Node {
     sensor_msgs::msg::JointState joint_state_msg_, action_msg_;
 
     void subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg);
+    void check_joy_watchdog();
     void subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::Twist> msg);
     void subs_elevation_callback(const std::shared_ptr<std_msgs::msg::Float32MultiArray> msg);
     void subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg);

@@ -176,7 +176,9 @@ void InferenceNode::get_cmd_vel_obs(std::vector<float>& segment) {
 void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
     joint_pos_buffer_ = robot_->get_joint_q();
     for (int i = 0; i < joint_num_; i++) {
-        segment[i] = (joint_pos_buffer_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) * obs_scales_dof_pos_;
+        segment[i] = policy_joint_signs_[i] *
+            (joint_pos_buffer_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) *
+            obs_scales_dof_pos_;
     }
     for(size_t i = 0; i < joint_limits_.size() / 2; i++){
         if(joint_pos_buffer_[i] < joint_limits_[i * 2] || joint_pos_buffer_[i] > joint_limits_[i * 2 + 1]){
@@ -190,7 +192,7 @@ void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
 void InferenceNode::get_dof_vel_obs(std::vector<float>& segment) {
     joint_vel_buffer_ = robot_->get_joint_vel();
     for (int i = 0; i < joint_num_; i++) {
-        segment[i] = joint_vel_buffer_[usd2urdf_[i]] * obs_scales_dof_vel_;
+        segment[i] = policy_joint_signs_[i] * joint_vel_buffer_[usd2urdf_[i]] * obs_scales_dof_vel_;
     }
 }
 

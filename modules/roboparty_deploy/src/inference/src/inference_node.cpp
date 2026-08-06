@@ -500,10 +500,26 @@ void InferenceNode::inference() {
 
         {
             std::unique_lock<std::mutex> lock(act_mutex_);
+            size_t clamped_joint_count = 0;
             for (size_t i = 0; i < usd2urdf_.size(); i++) {
                 const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
                 const float action = std::clamp(policy.ctx->output_buffer[i], -clip_actions_, clip_actions_);
-                act_[joint_idx] = action * action_scale_ + joint_default_angle_[joint_idx];
+                float target = static_cast<float>(
+                    policy_joint_signs_[i] * action * action_scale_ + joint_default_angle_[joint_idx]);
+                if (!joint_limits_.empty()) {
+                    const float lower = static_cast<float>(joint_limits_[joint_idx * 2]) + policy_joint_limit_margin_;
+                    const float upper = static_cast<float>(joint_limits_[joint_idx * 2 + 1]) - policy_joint_limit_margin_;
+                    const float clamped_target = std::clamp(target, lower, upper);
+                    clamped_joint_count += clamped_target != target ? 1 : 0;
+                    target = clamped_target;
+                }
+                act_[joint_idx] = target;
+            }
+            if (clamped_joint_count > 0) {
+                RCLCPP_WARN_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 1000,
+                    "Policy targets clamped by mechanical limits for %zu joint(s)",
+                    clamped_joint_count);
             }
                 if(supports_interrupt() && is_interrupt_.load()){
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);

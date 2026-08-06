@@ -157,6 +157,9 @@ def check_deploy_configs(reporter: Reporter, action_names: list[str], deploy_nam
     locomotion_default_pos = _python_np_array_constant(
         RPO_ONNX_SIM_PY, "LOCOMOTION_DEFAULT_POS_POLICY"
     )
+    locomotion_policy_signs = _python_np_array_constant(
+        RPO_ONNX_SIM_PY, "LOCOMOTION_POLICY_SIGNS"
+    )
     if len(locomotion_action_names) != 21 or len(set(locomotion_action_names)) != 21:
         reporter.error("LOCOMOTION_POLICY_JOINT_NAMES must have 21 unique joints")
     elif set(locomotion_action_names) != set(deploy_names):
@@ -184,9 +187,18 @@ def check_deploy_configs(reporter: Reporter, action_names: list[str], deploy_nam
         else:
             reporter.ok(f"{name}: usd2urdf matches {mapping_label}/deploy order")
         if is_external_locomotion:
+            actual_policy_signs = params.get("policy_joint_signs", [1.0] * len(deploy_names))
+            if len(actual_policy_signs) != len(locomotion_policy_signs) or not np.allclose(
+                actual_policy_signs, locomotion_policy_signs, rtol=0.0, atol=0.0
+            ):
+                reporter.error("default.yaml: policy_joint_signs does not match Sim2Sim")
+            else:
+                reporter.ok("default.yaml: policy_joint_signs matches Sim2Sim")
             expected_default_pos = [0.0] * len(deploy_names)
             for policy_index, deploy_index in enumerate(expected_mapping):
-                expected_default_pos[deploy_index] = locomotion_default_pos[policy_index]
+                expected_default_pos[deploy_index] = (
+                    locomotion_policy_signs[policy_index] * locomotion_default_pos[policy_index]
+                )
             actual_default_pos = params.get("joint_default_angle", [])
             if len(actual_default_pos) != len(expected_default_pos) or not np.allclose(
                 actual_default_pos, expected_default_pos, rtol=0.0, atol=1e-9
@@ -194,6 +206,25 @@ def check_deploy_configs(reporter: Reporter, action_names: list[str], deploy_nam
                 reporter.error("default.yaml: joint_default_angle does not match external locomotion policy")
             else:
                 reporter.ok("default.yaml: joint_default_angle matches external locomotion policy")
+            reset_joint_angle = params.get("reset_joint_angle", actual_default_pos)
+            joint_limits = params.get("joint_limits", [])
+            if len(reset_joint_angle) != len(deploy_names):
+                reporter.error("default.yaml: reset_joint_angle must contain 21 joints")
+            elif len(joint_limits) != 2 * len(deploy_names):
+                reporter.error("default.yaml: joint_limits must contain lower/upper values for 21 joints")
+            else:
+                out_of_range = []
+                for index, (joint_name, angle) in enumerate(zip(deploy_names, reset_joint_angle)):
+                    lower, upper = joint_limits[2 * index : 2 * index + 2]
+                    if not lower <= angle <= upper:
+                        out_of_range.append(f"{joint_name}={angle} outside [{lower}, {upper}]")
+                if out_of_range:
+                    reporter.error(
+                        "default.yaml: reset_joint_angle violates mechanical limits: "
+                        + "; ".join(out_of_range)
+                    )
+                else:
+                    reporter.ok("default.yaml: reset_joint_angle is within mechanical limits")
         for layout in params.get("obs_layouts", []):
             bad_sources = re.findall(r"(?:dof_pos|dof_vel|last_action|motion_pos|motion_vel):(?!21\b)\d+", layout)
             if bad_sources:

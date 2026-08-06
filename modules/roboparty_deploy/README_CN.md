@@ -317,6 +317,8 @@ screen -S joy_session -X quit
 - **右摇杆**: 控制前后左右移动
 - **LT/RT**: 控制转向（左 / 右旋转）
 
+手柄控制模式下，`/joy` 超过 `joy_timeout_sec`（默认 `0.5` 秒）没有新消息时，行走速度指令会自动清零；恢复收到手柄消息后自动解除超时状态。切换手柄与 `/cmd_vel` 控制来源时也会先清零速度指令。
+
 ### 服务接口
 
 可以通过命令行调用 ROS2 服务来控制机器人：
@@ -601,7 +603,7 @@ ros2 topic echo /joy --once
 
 当前手柄映射：
 
-- `A`: 复位到 `joint_default_angle`
+- `A`: 复位到 `reset_joint_angle`（未配置时兼容回退到 `joint_default_angle`）
 - `B`: 开始 / 暂停推理
 - `X`: 使能 / 失能电机
 - `Y`: 切换手柄控制 / `/cmd_vel`
@@ -722,7 +724,7 @@ can2: 右手 + 头，ID 从末端到身体递增
 can3: 左手，ID 从末端到身体递增
 ```
 
-当前 `joint_default_angle` 的 joint 顺序：
+`joint_default_angle` 是转换到实机 URDF 坐标后的策略默认姿态；`policy_joint_signs` 按 ONNX/Isaac 顺序描述策略坐标到实机坐标的方向转换；`reset_joint_angle` 是 A 键和 `reset_joints` 服务使用的实机安全初始化姿态；`stand_joint_angle` 是站立控制目标。姿态参数使用相同的实机 joint 顺序：
 
 ```text
 position[0:6]   左腿
