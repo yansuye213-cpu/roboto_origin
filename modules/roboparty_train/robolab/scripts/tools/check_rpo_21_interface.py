@@ -22,6 +22,8 @@ import yaml
 ROBO_LAB_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = ROBO_LAB_ROOT.parents[2]
 RPO_ASSET_PY = ROBO_LAB_ROOT / "robolab/assets/robots/roboparty.py"
+RPO_MUJOCO_PY = ROBO_LAB_ROOT / "scripts/mujoco/rpo_21_mujoco.py"
+RPO_ONNX_SIM_PY = ROBO_LAB_ROOT / "scripts/mujoco/sim2sim_rpo_onnx.py"
 RPO_URDF = ROBO_LAB_ROOT / "data/robots/roboparty/rpo/urdf/Loobot722.urdf"
 RPO_RETARGET_CFG = ROBO_LAB_ROOT / "scripts/tools/retarget/config/rpo.yaml"
 RPO_BM_DIR = ROBO_LAB_ROOT / "data/motions/rpo_bm"
@@ -61,6 +63,35 @@ def _python_list_constants(path: Path, names: set[str]) -> dict[str, list]:
     if missing:
         raise RuntimeError(f"Missing constants in {path}: {sorted(missing)}")
     return constants
+
+
+def _python_np_array_constant(path: Path, name: str) -> list[float]:
+    module = ast.parse(path.read_text())
+    for node in module.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call):
+            values = ast.literal_eval(value.args[0])
+        else:
+            values = ast.literal_eval(value)
+        return [float(value) for value in values]
+    raise RuntimeError(f"Missing {name} in {path}")
+
+
+def _urdf_effort_limits() -> dict[str, float]:
+    root = ET.parse(RPO_URDF).getroot()
+    limits = {}
+    for joint in root.findall("joint"):
+        if joint.attrib.get("type") == "fixed":
+            continue
+        limit = joint.find("limit")
+        if limit is None:
+            raise RuntimeError(f"{joint.attrib['name']} is missing a URDF limit")
+        limits[joint.attrib["name"]] = float(limit.attrib["effort"])
+    return limits
 
 
 def check_robot_assets(reporter: Reporter) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -119,7 +150,20 @@ def check_robot_assets(reporter: Reporter) -> tuple[list[str], list[str], list[s
 
 
 def check_deploy_configs(reporter: Reporter, action_names: list[str], deploy_names: list[str]):
-    expected_mapping = [deploy_names.index(name) for name in action_names]
+    locomotion_constants = _python_list_constants(
+        RPO_ONNX_SIM_PY, {"LOCOMOTION_POLICY_JOINT_NAMES"}
+    )
+    locomotion_action_names = locomotion_constants["LOCOMOTION_POLICY_JOINT_NAMES"]
+    locomotion_default_pos = _python_np_array_constant(
+        RPO_ONNX_SIM_PY, "LOCOMOTION_DEFAULT_POS_POLICY"
+    )
+    if len(locomotion_action_names) != 21 or len(set(locomotion_action_names)) != 21:
+        reporter.error("LOCOMOTION_POLICY_JOINT_NAMES must have 21 unique joints")
+    elif set(locomotion_action_names) != set(deploy_names):
+        reporter.error("LOCOMOTION_POLICY_JOINT_NAMES differs from deploy joints")
+    else:
+        reporter.ok("LOCOMOTION_POLICY_JOINT_NAMES has the same 21 joints as deploy")
+
     config_paths = sorted(DEPLOY_CONFIG_DIR.glob("*.yaml"))
     if not config_paths:
         reporter.warn(f"No deploy configs found at {DEPLOY_CONFIG_DIR}")
@@ -127,14 +171,29 @@ def check_deploy_configs(reporter: Reporter, action_names: list[str], deploy_nam
     for path in config_paths:
         params = yaml.safe_load(path.read_text())["inference_node"]["ros__parameters"]
         name = path.name
+        is_external_locomotion = name == "default.yaml"
+        policy_joint_names = locomotion_action_names if is_external_locomotion else action_names
+        expected_mapping = [deploy_names.index(joint_name) for joint_name in policy_joint_names]
+        mapping_label = "external locomotion policy" if is_external_locomotion else "train action"
         if params.get("joint_num") != 21:
             reporter.error(f"{name}: joint_num is {params.get('joint_num')}, expected 21")
         else:
             reporter.ok(f"{name}: joint_num is 21")
         if params.get("usd2urdf") != expected_mapping:
-            reporter.error(f"{name}: usd2urdf does not match train action/deploy order")
+            reporter.error(f"{name}: usd2urdf does not match {mapping_label}/deploy order")
         else:
-            reporter.ok(f"{name}: usd2urdf matches train action/deploy order")
+            reporter.ok(f"{name}: usd2urdf matches {mapping_label}/deploy order")
+        if is_external_locomotion:
+            expected_default_pos = [0.0] * len(deploy_names)
+            for policy_index, deploy_index in enumerate(expected_mapping):
+                expected_default_pos[deploy_index] = locomotion_default_pos[policy_index]
+            actual_default_pos = params.get("joint_default_angle", [])
+            if len(actual_default_pos) != len(expected_default_pos) or not np.allclose(
+                actual_default_pos, expected_default_pos, rtol=0.0, atol=1e-9
+            ):
+                reporter.error("default.yaml: joint_default_angle does not match external locomotion policy")
+            else:
+                reporter.ok("default.yaml: joint_default_angle matches external locomotion policy")
         for layout in params.get("obs_layouts", []):
             bad_sources = re.findall(r"(?:dof_pos|dof_vel|last_action|motion_pos|motion_vel):(?!21\b)\d+", layout)
             if bad_sources:
@@ -211,18 +270,59 @@ def check_motion_data(reporter: Reporter, action_names: list[str], body_names: l
             reporter.ok(f"{path.name}: dof_pos has {num_joints} DoFs")
 
 
-def check_mujoco_assets(reporter: Reporter, num_joints: int):
+def check_mujoco_assets(reporter: Reporter, num_joints: int, deploy_names: list[str]):
+    effort_limits = _urdf_effort_limits()
+    expected_tau_limits = [effort_limits[name] for name in deploy_names]
+    mujoco_constants = _python_list_constants(RPO_MUJOCO_PY, {"RPO_MJCF_JOINT_NAMES"})
+    if mujoco_constants["RPO_MJCF_JOINT_NAMES"] == deploy_names:
+        reporter.ok("RPO_MJCF_JOINT_NAMES matches deploy/MJCF joint order")
+    else:
+        reporter.error("RPO_MJCF_JOINT_NAMES does not match deploy/MJCF joint order")
+
+    tau_limits = _python_np_array_constant(RPO_MUJOCO_PY, "RPO_TAU_LIMIT")
+    if len(tau_limits) != num_joints:
+        reporter.error(f"RPO_TAU_LIMIT has {len(tau_limits)} entries, expected {num_joints}")
+    else:
+        mismatches = [
+            f"{name}: tau={actual:g}, urdf={expected:g}"
+            for name, actual, expected in zip(deploy_names, tau_limits, expected_tau_limits)
+            if not np.isclose(actual, expected, rtol=0.0, atol=1e-6)
+        ]
+        if mismatches:
+            reporter.error("RPO_TAU_LIMIT differs from Loobot722.urdf effort limits: " + "; ".join(mismatches))
+        else:
+            reporter.ok("RPO_TAU_LIMIT matches Loobot722.urdf effort limits")
+
     expected_paths = [RPO_MJCF_DIR / name for name in RPO_21_MJCF_FILES]
     for path in expected_paths:
         if not path.is_file():
             reporter.error(f"{path.name}: missing 21-DoF MuJoCo XML")
             continue
-        text = path.read_text(errors="ignore")
-        actuators = re.findall(r"<(?:motor|position|velocity|general)\b[^>]*\bjoint=\"([^\"]+)\"", text)
-        if len(actuators) != num_joints:
-            reporter.error(f"{path.name}: has {len(actuators)} actuators, expected {num_joints}")
+        root = ET.parse(path).getroot()
+        actuator_nodes = [node for node in root.findall(".//actuator/*") if "joint" in node.attrib]
+        actuator_joints = [node.attrib["joint"] for node in actuator_nodes]
+        if len(actuator_joints) != num_joints:
+            reporter.error(f"{path.name}: has {len(actuator_joints)} actuators, expected {num_joints}")
         else:
             reporter.ok(f"{path.name}: actuator count matches {num_joints}")
+        if actuator_joints == deploy_names:
+            reporter.ok(f"{path.name}: actuator order matches deploy/MJCF joint order")
+        else:
+            reporter.error(f"{path.name}: actuator order does not match deploy/MJCF joint order")
+        actuator_mismatches = []
+        for node in actuator_nodes:
+            joint_name = node.attrib["joint"]
+            expected = effort_limits.get(joint_name)
+            ctrlrange = node.attrib.get("ctrlrange")
+            if expected is None or ctrlrange is None:
+                continue
+            lower, upper = [float(value) for value in ctrlrange.split()]
+            if not (np.isclose(lower, -expected, rtol=0.0, atol=1e-6) and np.isclose(upper, expected, rtol=0.0, atol=1e-6)):
+                actuator_mismatches.append(f"{joint_name}: ctrlrange={ctrlrange}, urdf=+-{expected:g}")
+        if actuator_mismatches:
+            reporter.error(f"{path.name}: actuator ctrlrange differs from Loobot722.urdf effort limits: " + "; ".join(actuator_mismatches))
+        else:
+            reporter.ok(f"{path.name}: actuator ctrlrange matches Loobot722.urdf effort limits")
 
     for path in sorted(RPO_MJCF_DIR.glob("rpo*.xml")):
         if path.name in RPO_21_MJCF_FILES:
@@ -247,7 +347,7 @@ def main() -> int:
         check_motion_data(reporter, action_names, link_names, args.check_lab_motions)
     else:
         reporter.warn("Skipping motion data checks; pass --check-motion-data to include rpo_bm npz files")
-    check_mujoco_assets(reporter, len(action_names))
+    check_mujoco_assets(reporter, len(action_names), deploy_names)
 
     print(f"\nSummary: {len(reporter.errors)} error(s), {len(reporter.warnings)} warning(s)")
     return 1 if reporter.errors else 0

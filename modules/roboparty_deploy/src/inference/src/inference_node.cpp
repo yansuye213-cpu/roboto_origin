@@ -500,13 +500,10 @@ void InferenceNode::inference() {
 
         {
             std::unique_lock<std::mutex> lock(act_mutex_);
-            for (float& action : policy.ctx->output_buffer) {
-                action = std::clamp(action, -clip_actions_, clip_actions_);
-            }
             for (size_t i = 0; i < usd2urdf_.size(); i++) {
                 const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
-                act_[joint_idx] = policy.ctx->output_buffer[i];
-                act_[joint_idx] = act_[joint_idx] * action_scale_ + joint_default_angle_[joint_idx];
+                const float action = std::clamp(policy.ctx->output_buffer[i], -clip_actions_, clip_actions_);
+                act_[joint_idx] = action * action_scale_ + joint_default_angle_[joint_idx];
             }
                 if(supports_interrupt() && is_interrupt_.load()){
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);

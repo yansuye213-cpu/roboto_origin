@@ -37,9 +37,6 @@ from pathlib import Path
 
 try:
     from .rpo_21_mujoco import (
-        RPO_ACTION_JOINT_NAMES,
-        RPO_ACTION_TO_MJCF,
-        RPO_DEFAULT_POS,
         RPO_KDS,
         RPO_KPS,
         RPO_MJCF_JOINT_NAMES,
@@ -49,9 +46,6 @@ try:
     )
 except ImportError:
     from rpo_21_mujoco import (
-        RPO_ACTION_JOINT_NAMES,
-        RPO_ACTION_TO_MJCF,
-        RPO_DEFAULT_POS,
         RPO_KDS,
         RPO_KPS,
         RPO_MJCF_JOINT_NAMES,
@@ -74,10 +68,48 @@ except ImportError:
         return iterable
 
 
+LOCOMOTION_POLICY_JOINT_NAMES = [
+    "head_yaw_joint",
+    "left_leg_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "right_leg_pitch_joint",
+    "right_shoulder_pitch_joint",
+    "left_leg_roll_joint",
+    "left_shoulder_roll_joint",
+    "right_leg_roll_joint",
+    "right_shoulder_roll_joint",
+    "left_leg_yaw_joint",
+    "left_shoulder_yaw_joint",
+    "right_leg_yaw_joint",
+    "right_shoulder_yaw_joint",
+    "left_knee_joint",
+    "left_elbow_pitch_joint",
+    "right_knee_joint",
+    "right_elbow_pitch_joint",
+    "left_ankle_pitch_joint",
+    "right_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_ankle_roll_joint",
+]
+LOCOMOTION_POLICY_TO_MJCF = [
+    RPO_MJCF_JOINT_NAMES.index(name) for name in LOCOMOTION_POLICY_JOINT_NAMES
+]
+LOCOMOTION_DEFAULT_POS_POLICY = np.array(
+    [
+        0.0, -0.1, -0.18, -0.1, -0.18, 0.0, 0.15,
+        0.0, -0.15, 0.0, 0.0, 0.0, 0.0, 0.3,
+        -0.3, 0.3, -0.3, -0.2, -0.2, 0.0, 0.0,
+    ],
+    dtype=np.double,
+)
+LOCOMOTION_DEFAULT_POS_MJCF = np.zeros(len(LOCOMOTION_POLICY_JOINT_NAMES), dtype=np.double)
+LOCOMOTION_DEFAULT_POS_MJCF[LOCOMOTION_POLICY_TO_MJCF] = LOCOMOTION_DEFAULT_POS_POLICY
+
+
 class cmd:
-    vx = 1.0
+    vx = 0.0
     vy = 0.0
-    dyaw = 1.0
+    dyaw = 0.0
 
 
 def pd_control(target_q, q, kp, target_dq, dq, kd):
@@ -192,7 +224,11 @@ def run_mujoco(policy, cfg, headless=False, no_video=False):
             else:
                 hist_obs = np.concatenate((hist_obs[1:], obs.reshape(1, -1)), axis=0)
 
-            policy_input = hist_obs.reshape(1, -1).astype(np.float32)
+            policy_input = np.clip(
+                hist_obs.reshape(1, -1),
+                -cfg.robot_config.clip_observations,
+                cfg.robot_config.clip_observations,
+            ).astype(np.float32)
             if policy_input.shape[1] != cfg.robot_config.num_observations:
                 raise ValueError(
                     f"Policy input has {policy_input.shape[1]} observations, "
@@ -206,7 +242,9 @@ def run_mujoco(policy, cfg, headless=False, no_video=False):
                 )
             action[:] = policy_action
 
-            target_q = action * cfg.robot_config.action_scale
+            target_q = np.clip(
+                action, -cfg.robot_config.clip_actions, cfg.robot_config.clip_actions
+            ) * cfg.robot_config.action_scale
             for i in range(len(cfg.robot_config.usd2urdf)):
                 target_pos[cfg.robot_config.usd2urdf[i]] = target_q[i]
             target_pos = target_pos + cfg.robot_config.default_pos
@@ -379,14 +417,16 @@ if __name__ == '__main__':
             mjcf_joint_names = RPO_MJCF_JOINT_NAMES
             kps = RPO_KPS
             kds = RPO_KDS
-            default_pos = RPO_DEFAULT_POS
+            default_pos = LOCOMOTION_DEFAULT_POS_MJCF
             tau_limit = RPO_TAU_LIMIT
             frame_stack = 10
-            num_actions = len(RPO_ACTION_JOINT_NAMES)
+            num_actions = len(LOCOMOTION_POLICY_JOINT_NAMES)
             num_single_obs = 9 + 3 * num_actions
             num_observations = num_single_obs * frame_stack
             action_scale = 0.25
-            usd2urdf = RPO_ACTION_TO_MJCF
+            clip_observations = 100.0
+            clip_actions = 100.0
+            usd2urdf = LOCOMOTION_POLICY_TO_MJCF
 
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
