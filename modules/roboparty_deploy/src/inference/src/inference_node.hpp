@@ -240,10 +240,13 @@ class InferenceNode : public rclcpp::Node {
     float policy_transition_time_;
     float policy_transition_elapsed_ = 0.0f;
     bool policy_transition_active_ = false;
+    bool policy_transition_target_ready_ = false;
     StandingStabilizer::Config stand_stabilizer_config_;
     std::unique_ptr<StandingStabilizer> stand_stabilizer_;
     std::vector<float> stand_start_action_;
     std::vector<float> policy_start_action_;
+    std::vector<float> policy_transition_offset_;
+    std::vector<float> policy_filtered_action_;
     std::vector<float> stand_kp_, stand_kd_;
     int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0;
     std::atomic<int64_t> last_joy_message_ns_{0};

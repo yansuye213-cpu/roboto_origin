@@ -50,8 +50,8 @@ inference_node:
              0.0000,
              0.18, 0.06, 0.0, 0.78,
              0.18, -0.06, 0.0, 0.78]
-        stand_transition_time: 1.5
-        policy_transition_time: 2.0
+        stand_transition_time: 0.5
+        policy_transition_time: 0.5
         stand_whole_body_model_path: "description/urdf/Loobot722.urdf"
         stand_whole_body_base_link: "base_link"
         stand_whole_body_left_foot_link: "left_ankle_roll_link"

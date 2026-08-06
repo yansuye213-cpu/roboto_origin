@@ -161,6 +161,7 @@ void InferenceNode::reset_runtime_state() {
         stand_transition_active_ = false;
         policy_transition_elapsed_ = 0.0f;
         policy_transition_active_ = false;
+        policy_transition_target_ready_ = false;
     }
     {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
@@ -175,6 +176,8 @@ void InferenceNode::reset_runtime_state() {
         for (int i = 0; i < joint_num_; i++) {
             act_[i] = static_cast<float>(joint_default_angle_[i]);
             last_act_[i] = static_cast<float>(joint_default_angle_[i]);
+            policy_filtered_action_[i] = static_cast<float>(joint_default_angle_[i]);
+            policy_transition_offset_[i] = 0.0f;
         }
     }
     if (supports_interrupt()) {
@@ -219,6 +222,8 @@ void InferenceNode::initialize_runtime_state() {
     last_act_.assign(joint_num_, 0.0f);
     stand_start_action_.assign(joint_num_, 0.0f);
     policy_start_action_.assign(joint_num_, 0.0f);
+    policy_transition_offset_.assign(joint_num_, 0.0f);
+    policy_filtered_action_.assign(joint_num_, 0.0f);
     joint_pos_buffer_.assign(joint_num_, 0.0f);
     joint_vel_buffer_.assign(joint_num_, 0.0f);
     joint_torques_buffer_.assign(joint_num_, 0.0f);
@@ -290,7 +295,10 @@ void InferenceNode::start_policy_transition_locked(const std::vector<float>& cur
     stand_transition_active_ = false;
     policy_transition_elapsed_ = 0.0f;
     policy_transition_active_ = true;
+    policy_transition_target_ready_ = false;
     policy_start_action_ = current_joint_q;
+    std::fill(policy_transition_offset_.begin(), policy_transition_offset_.end(), 0.0f);
+    policy_filtered_action_ = current_joint_q;
     reset_policy_runtime(active_policy());
     {
         std::unique_lock<std::mutex> lock(act_mutex_);
@@ -308,6 +316,7 @@ void InferenceNode::enter_safe_stand_locked(const std::vector<float>& current_jo
     sync_action_reference(current_joint_q);
     control_mode_ = ControlMode::Stand;
     policy_transition_active_ = false;
+    policy_transition_target_ready_ = false;
     is_interrupt_.store(false);
     is_motion_policy_.store(false);
     active_policy_idx_ = 0;
@@ -442,8 +451,6 @@ void InferenceNode::apply_action() {
     if (!is_running_.load() || !robot_->is_init_.load()) {
         return;
     }
-    float policy_blend = 1.0f;
-    bool policy_transition = false;
     std::vector<float> command;
     std::unique_lock<std::mutex> mode_lock(mode_mutex_);
     if (control_mode_ == ControlMode::Stand) {
@@ -451,25 +458,41 @@ void InferenceNode::apply_action() {
         apply_stand_action();
         return;
     }
-    if (policy_transition_active_) {
-        policy_transition_elapsed_ += dt_;
-        const float duration = std::max(policy_transition_time_, dt_);
-        policy_blend = std::clamp(policy_transition_elapsed_ / duration, 0.0f, 1.0f);
-        policy_blend = policy_blend * policy_blend * (3.0f - 2.0f * policy_blend);
-        policy_transition = true;
-        if (policy_transition_elapsed_ >= duration) {
-            policy_transition_active_ = false;
-        }
-    }
     {
         std::unique_lock<std::mutex> lock(act_mutex_);
-        for (size_t i = 0; i < act_.size(); i++) {
-            const float policy_target = act_alpha_ * act_[i] + (1 - act_alpha_) * last_act_[i];
-            last_act_[i] = policy_transition
-                ? policy_start_action_[i] + policy_blend * (policy_target - policy_start_action_[i])
-                : policy_target;
+        if (policy_transition_active_ && !policy_transition_target_ready_) {
+            command = policy_start_action_;
+        } else {
+            float remaining_offset = 0.0f;
+            if (policy_transition_active_) {
+                policy_transition_elapsed_ += dt_;
+                const float duration = std::max(policy_transition_time_, dt_);
+                const float phase = std::clamp(policy_transition_elapsed_ / duration, 0.0f, 1.0f);
+                const float phase2 = phase * phase;
+                const float phase3 = phase2 * phase;
+                const float smootherstep = phase3 * (phase * (phase * 6.0f - 15.0f) + 10.0f);
+                remaining_offset = 1.0f - smootherstep;
+                if (policy_transition_elapsed_ >= duration) {
+                    policy_transition_active_ = false;
+                }
+            }
+            // Decay only the handoff mismatch; do not attenuate subsequent policy motion.
+            for (size_t i = 0; i < act_.size(); i++) {
+                policy_filtered_action_[i] =
+                    act_alpha_ * act_[i] + (1.0f - act_alpha_) * policy_filtered_action_[i];
+                float target = policy_filtered_action_[i] +
+                               remaining_offset * policy_transition_offset_[i];
+                if (remaining_offset > 0.0f && !joint_limits_.empty()) {
+                    const float lower = static_cast<float>(joint_limits_[i * 2]) +
+                                        policy_joint_limit_margin_;
+                    const float upper = static_cast<float>(joint_limits_[i * 2 + 1]) -
+                                        policy_joint_limit_margin_;
+                    target = std::clamp(target, lower, upper);
+                }
+                last_act_[i] = target;
+            }
+            command = last_act_;
         }
-        command = last_act_;
     }
     mode_lock.unlock();
     robot_->apply_action(command);
@@ -598,6 +621,13 @@ void InferenceNode::inference() {
                     for (size_t i = 0; i < interrupt_action_.size(); i++) {
                         act_[act_.size() - interrupt_action_.size() + i] = interrupt_action_[i];
                     }
+                }
+                if (policy_transition_active_ && !policy_transition_target_ready_) {
+                    for (size_t i = 0; i < act_.size(); i++) {
+                        policy_filtered_action_[i] = act_[i];
+                        policy_transition_offset_[i] = policy_start_action_[i] - act_[i];
+                    }
+                    policy_transition_target_ready_ = true;
                 }
                 publish_action();
             }

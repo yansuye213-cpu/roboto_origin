@@ -305,7 +305,6 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
 
     constexpr int ramp_steps = 200;
     constexpr auto ramp_period = std::chrono::milliseconds(10);
-    constexpr float reset_kp_scale = 1.0f / 2.5f;
     for (int step = 1; step <= ramp_steps; step++) {
         const float alpha = static_cast<float>(step) / static_cast<float>(ramp_steps);
         {
@@ -313,7 +312,7 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
             for (size_t i = 0; i < motor_pos_target_.size(); i++){
                 motor_pos_target_[i] = start_motor_pos[i] + alpha * (target_motor_pos[i] - start_motor_pos[i]);
                 motor_vel_target_[i] = 0.0f;
-                motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]) * reset_kp_scale;
+                motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]);
                 motor_kd_target_[i]  = static_cast<float>(robot_cfg_->kd_[i]);
                 motor_tau_target_[i] = 0.0f;
             }
@@ -327,18 +326,9 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
         for (size_t i = 0; i < motor_pos_target_.size(); i++){
             motor_pos_target_[i] = target_motor_pos[i];
             motor_vel_target_[i] = 0.0f;
-            motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]) * reset_kp_scale;
+            motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]);
             motor_kd_target_[i]  = static_cast<float>(robot_cfg_->kd_[i]);
             motor_tau_target_[i] = 0.0f;
-        }
-    }
-    motors_mit_cmd();
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    {
-        std::unique_lock<std::mutex> lock(motors_mutex_);
-        for (size_t i = 0; i < motor_kp_target_.size(); i++){
-            motor_kp_target_[i] = static_cast<float>(robot_cfg_->kp_[i]);
         }
     }
     motors_mit_cmd();
