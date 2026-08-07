@@ -763,3 +763,13 @@ cd ~/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ./tools/start_robot.sh --robot rpo --policy default
+
+ssh limrobot@192.168.55.2
+
+source /home/yansuye/miniconda3/bin/activate
+conda activate mujoco
+
+cd /home/yansuye/Projects/RoboParty/roboto_origin/modules/roboparty_train
+
+python robolab/scripts/mujoco/sim2sim_rpo_onnx.py \
+  --load_model ../roboparty_deploy/src/inference/robots/rpo/models/policy.onnx
