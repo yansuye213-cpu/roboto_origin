@@ -124,7 +124,7 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         }
         cached_ankle_action_.resize(close_chain_joint_idx_.size(), 0.0f);
         last_ankle_joint_target_.resize(close_chain_joint_idx_.size(), 0.0f);
-        if (robot_node["type"]) {
+        if (!close_chain_joint_idx_.empty() && robot_node["type"]) {
             ankle_decouple_ = Decouple::create(robot_node["type"].as<std::string>());
         } else {
             ankle_decouple_ = nullptr;
