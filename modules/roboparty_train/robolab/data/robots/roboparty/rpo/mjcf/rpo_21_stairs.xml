@@ -91,11 +91,11 @@
               <geom type="box" pos="-0.017 0.026 -0.099" rgba="0 0 0 0" size="0.0545 0.05 0.136" />
               <body name="left_ankle_pitch_link" pos="0 0.051 -0.213694214876">
                 <inertial pos="-0.00167459351811 -8.881784197e-16 4.99600361081e-16" mass="0.09118384" fullinertia="1.41e-05 2.034e-05 2.33e-05 0 0 0" />
-                <joint name="left_ankle_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.288 0.079" class="leg_joint_param" />
+                <joint name="left_ankle_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.377162 0.357987" class="leg_joint_param" />
                 <geom type="mesh" rgba="0.898039215686 0.917647058824 0.929411764706 1" mesh="left_ankle_pitch_link" contype="0" conaffinity="0" group="2" />
                 <body name="left_ankle_roll_link" pos="-0.042 0 0">
                   <inertial pos="0.087981 -5.2157e-06 -0.020219" mass="1.46424250" fullinertia="0.00153781 0.00580077 0.00550318 -1.18e-06 -0.00090579 7e-08" />
-                  <joint name="left_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.0415 0.129" class="leg_joint_param" />
+                  <joint name="left_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.589145 0.520970" class="leg_joint_param" />
                   <geom type="mesh" rgba="0.89804 0.91765 0.92941 1" mesh="left_ankle_roll_link" contype="0" conaffinity="0" group="2" />
                   <geom type="mesh" pos="0 0 0" rgba="0 0 0 0" mesh="left_ankle_roll_link" />
                 </body>
@@ -120,16 +120,16 @@
             <geom type="box" pos="0 0.013 -0.065" rgba="0 0 0 0" size="0.06 0.0505 0.092" />
             <body name="right_knee_link" pos="6e-05 0.051 -0.097">
               <inertial pos="-0.00056033 -0.018596 -0.094596" mass="2.03383256" fullinertia="0.0113339 0.01112445 0.00162009 -2.77e-05 -4.798e-05 -0.00119641" />
-              <joint name="right_knee_joint" pos="0 0 0" axis="0 1 0" range="0.061608 1.811818" class="leg_joint_param" />
+              <joint name="right_knee_joint" pos="0 0 0" axis="0 1 0" range="0 1.811818" class="leg_joint_param" />
               <geom type="mesh" rgba="0.89804 0.91765 0.92941 1" mesh="right_knee_link" contype="0" conaffinity="0" group="2" />
               <geom type="box" pos="-0.017 -0.026 -0.099" rgba="0 0 0 0" size="0.0545 0.05 0.136" />
               <body name="right_ankle_pitch_link" pos="0 -0.051 -0.21369">
                 <inertial pos="-0.00167459351811 -8.32667268469e-17 2.77555756156e-16" mass="0.09118384" fullinertia="1.41e-05 2.034e-05 2.33e-05 0 0 0" />
-                <joint name="right_ankle_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.2745 0.138" class="leg_joint_param" />
+                <joint name="right_ankle_pitch_joint" pos="0 0 0" axis="0 1 0" range="-0.450025 0.372177" class="leg_joint_param" />
                 <geom type="mesh" rgba="0.317647058824 0.247058823529 0.207843137255 1" mesh="right_ankle_pitch_link" contype="0" conaffinity="0" group="2" />
                 <body name="right_ankle_roll_link" pos="-0.042 0 0">
                   <inertial pos="0.087981 4.4676e-06 -0.020219" mass="1.46424250" fullinertia="0.00153781 0.00580077 0.00550318 1.16e-06 -0.00090579 -6e-08" />
-                  <joint name="right_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.108 0.0805" class="leg_joint_param" />
+                  <joint name="right_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.520970 0.890271" class="leg_joint_param" />
                   <geom type="mesh" rgba="0.31765 0.24706 0.20784 1" mesh="right_ankle_roll_link" contype="0" conaffinity="0" group="2" />
                   <geom type="mesh" pos="0 0 0" rgba="0 0 0 0" mesh="right_ankle_roll_link" />
                 </body>
@@ -150,7 +150,7 @@
         <geom type="mesh" rgba="1 1 1 1" mesh="left_shoulder_pitch_link" contype="0" conaffinity="0" group="2" />
         <body name="left_shoulder_roll_link" pos="0.03425 0.07475 -0.005">
           <inertial pos="-0.0310283762108 3.66306212217e-05 -0.0189876085048" mass="0.44708769" fullinertia="0.00057713 0.00057964 0.0001967 -4e-08 3.196e-05 3.1e-07" />
-          <joint name="left_shoulder_roll_joint" pos="0 0 0" axis="1 0 0" range="0.037576 2.17689" class="arm_joint_param" />
+          <joint name="left_shoulder_roll_joint" pos="0 0 0" axis="1 0 0" range="0 2.176890" class="arm_joint_param" />
           <geom type="mesh" rgba="0.792156862745 0.819607843137 0.933333333333 1" mesh="left_shoulder_roll_link" contype="0" conaffinity="0" group="2" />
           <body name="left_shoulder_yaw_link" pos="-0.02725 0 -0.05675">
             <inertial pos="-0.0020521 -0.0047196 -0.063541" mass="0.73732871" fullinertia="0.0014176 0.00140365 0.00068856 6.36e-06 -1.026e-05 -0.00013187" />
@@ -158,7 +158,7 @@
             <geom type="mesh" rgba="1 1 1 1" mesh="left_shoulder_yaw_link" contype="0" conaffinity="0" group="2" />
             <body name="left_elbow_pitch_link" pos="0 0.02175 -0.10275">
               <inertial pos="-0.00081845 -0.012436 -0.085123" mass="0.48283833" fullinertia="0.00413598 0.00406313 0.00104417 -3.6e-07 1.469e-05 -5.51e-05" />
-              <joint name="left_elbow_pitch_joint" pos="0 0 0" axis="0 1 0" range="0 1.576829" class="arm_joint_param" />
+              <joint name="left_elbow_pitch_joint" pos="0 0 0" axis="0 1 0" range="-1.576829 0" class="arm_joint_param" />
               <geom type="mesh" rgba="1 1 1 1" mesh="left_elbow_pitch_link" contype="0" conaffinity="0" group="2" />
             </body>
           </body>
@@ -178,7 +178,7 @@
             <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="right_shoulder_yaw_link" contype="0" conaffinity="0" group="2" />
             <body name="right_elbow_pitch_link" pos="0 -0.02175 -0.10275">
               <inertial pos="-0.00081486 0.012443 -0.08504" mass="0.48283833" fullinertia="0.00413366 0.00406082 0.00104417 3.7e-07 1.469e-05 5.517e-05" />
-              <joint name="right_elbow_pitch_joint" pos="0 0 0" axis="0 1 0" range="0 1.58484" class="arm_joint_param" />
+              <joint name="right_elbow_pitch_joint" pos="0 0 0" axis="0 1 0" range="-1.584840 0" class="arm_joint_param" />
               <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="right_elbow_pitch_link" contype="0" conaffinity="0" group="2" />
             </body>
           </body>

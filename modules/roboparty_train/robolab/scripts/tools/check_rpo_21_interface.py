@@ -94,6 +94,22 @@ def _urdf_effort_limits() -> dict[str, float]:
     return limits
 
 
+def _urdf_position_limits() -> dict[str, tuple[float, float]]:
+    root = ET.parse(RPO_URDF).getroot()
+    limits = {}
+    for joint in root.findall("joint"):
+        if joint.attrib.get("type") == "fixed":
+            continue
+        limit = joint.find("limit")
+        if limit is None:
+            raise RuntimeError(f"{joint.attrib['name']} is missing a URDF limit")
+        limits[joint.attrib["name"]] = (
+            float(limit.attrib["lower"]),
+            float(limit.attrib["upper"]),
+        )
+    return limits
+
+
 def check_robot_assets(reporter: Reporter) -> tuple[list[str], list[str], list[str], list[str]]:
     constants = _python_list_constants(
         RPO_ASSET_PY,
@@ -303,6 +319,7 @@ def check_motion_data(reporter: Reporter, action_names: list[str], body_names: l
 
 def check_mujoco_assets(reporter: Reporter, num_joints: int, deploy_names: list[str]):
     effort_limits = _urdf_effort_limits()
+    position_limits = _urdf_position_limits()
     expected_tau_limits = [effort_limits[name] for name in deploy_names]
     mujoco_constants = _python_list_constants(RPO_MUJOCO_PY, {"RPO_MJCF_JOINT_NAMES"})
     if mujoco_constants["RPO_MJCF_JOINT_NAMES"] == deploy_names:
@@ -330,6 +347,26 @@ def check_mujoco_assets(reporter: Reporter, num_joints: int, deploy_names: list[
             reporter.error(f"{path.name}: missing 21-DoF MuJoCo XML")
             continue
         root = ET.parse(path).getroot()
+        joint_limit_mismatches = []
+        for node in root.findall(".//joint"):
+            joint_name = node.attrib.get("name")
+            expected = position_limits.get(joint_name)
+            joint_range = node.attrib.get("range")
+            if expected is None or joint_range is None:
+                continue
+            actual = tuple(float(value) for value in joint_range.split())
+            if len(actual) != 2 or not np.allclose(actual, expected, rtol=0.0, atol=1e-6):
+                joint_limit_mismatches.append(
+                    f"{joint_name}: range={joint_range}, urdf={expected[0]:g} {expected[1]:g}"
+                )
+        if joint_limit_mismatches:
+            reporter.error(
+                f"{path.name}: joint ranges differ from Loobot722.urdf: "
+                + "; ".join(joint_limit_mismatches)
+            )
+        else:
+            reporter.ok(f"{path.name}: joint ranges match Loobot722.urdf")
+
         actuator_nodes = [node for node in root.findall(".//actuator/*") if "joint" in node.attrib]
         actuator_joints = [node.attrib["joint"] for node in actuator_nodes]
         if len(actuator_joints) != num_joints:

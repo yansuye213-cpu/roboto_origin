@@ -28,8 +28,8 @@ inference_node:
             [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
              -0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
              0.0,
-             -0.18, 0.15, 0.0, -0.3,
-             -0.18, -0.15, 0.0, -0.3]
+             -0.18, 0.25, 0.0, -0.3,
+             -0.18, -0.25, 0.0, -0.3]
         # Policy/Isaac order. All policy joint directions now match the real-robot URDF.
         policy_joint_signs:
             [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,

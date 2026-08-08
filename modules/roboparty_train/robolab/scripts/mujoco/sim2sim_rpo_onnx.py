@@ -37,8 +37,6 @@ from pathlib import Path
 
 try:
     from .rpo_21_mujoco import (
-        RPO_KDS,
-        RPO_KPS,
         RPO_MJCF_JOINT_NAMES,
         RPO_TAU_LIMIT,
         assert_rpo_21_mujoco_model,
@@ -46,8 +44,6 @@ try:
     )
 except ImportError:
     from rpo_21_mujoco import (
-        RPO_KDS,
-        RPO_KPS,
         RPO_MJCF_JOINT_NAMES,
         RPO_TAU_LIMIT,
         assert_rpo_21_mujoco_model,
@@ -96,8 +92,8 @@ LOCOMOTION_POLICY_TO_MJCF = [
 ]
 LOCOMOTION_DEFAULT_POS_POLICY = np.array(
     [
-        0.0, -0.1, -0.18, -0.1, -0.18, 0.0, 0.15,
-        0.0, -0.15, 0.0, 0.0, 0.0, 0.0, 0.3,
+        0.0, -0.1, -0.18, -0.1, -0.18, 0.0, 0.25,
+        0.0, -0.25, 0.0, 0.0, 0.0, 0.0, 0.3,
         -0.3, 0.3, -0.3, -0.2, -0.2, 0.0, 0.0,
     ],
     dtype=np.double,
@@ -106,13 +102,33 @@ LOCOMOTION_POLICY_SIGNS = np.array(
     [
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
         1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-        -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0,
+        1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
     ],
     dtype=np.double,
 )
 LOCOMOTION_DEFAULT_POS_MJCF = np.zeros(len(LOCOMOTION_POLICY_JOINT_NAMES), dtype=np.double)
 LOCOMOTION_DEFAULT_POS_MJCF[LOCOMOTION_POLICY_TO_MJCF] = (
     LOCOMOTION_POLICY_SIGNS * LOCOMOTION_DEFAULT_POS_POLICY
+)
+LOCOMOTION_KPS_MJCF = np.array(
+    [
+        100.0, 100.0, 100.0, 150.0, 60.0, 60.0,
+        100.0, 100.0, 100.0, 150.0, 60.0, 60.0,
+        30.0,
+        40.0, 40.0, 40.0, 30.0,
+        40.0, 40.0, 40.0, 30.0,
+    ],
+    dtype=np.double,
+)
+LOCOMOTION_KDS_MJCF = np.array(
+    [
+        3.3, 3.3, 3.3, 4.0, 2.5, 2.5,
+        3.3, 3.3, 3.3, 4.0, 2.5, 2.5,
+        1.5,
+        2.0, 2.0, 2.0, 1.5,
+        2.0, 2.0, 2.0, 1.5,
+    ],
+    dtype=np.double,
 )
 
 
@@ -199,11 +215,21 @@ def run_mujoco(policy, cfg, headless=False, no_video=False):
     actual_lin_vel_data = [] # Store [vx, vy] at low freq
     actual_ang_vel_data = [] # Store [wz] at low freq
     # -------------------------------------------------------------
+    min_base_height = float("inf")
+    max_gravity_z = -float("inf")
+    final_gravity = np.array([0.0, 0.0, -1.0], dtype=np.double)
     is_first_frame = True
-    for step in tqdm(range(int(cfg.sim_config.sim_duration / cfg.sim_config.dt)), desc="Simulating..."):
+    for step in tqdm(
+        range(int(cfg.sim_config.sim_duration / cfg.sim_config.dt)),
+        desc="Simulating...",
+        disable=headless,
+    ):
 
         # Obtain an observation
         q, dq, quat, v, omega, gvec = get_obs(data)
+        min_base_height = min(min_base_height, float(q[2]))
+        max_gravity_z = max(max_gravity_z, float(gvec[2]))
+        final_gravity = gvec.copy()
         q = q[-cfg.robot_config.num_actions:]
         dq = dq[-cfg.robot_config.num_actions:]
 
@@ -234,8 +260,24 @@ def run_mujoco(policy, cfg, headless=False, no_video=False):
             else:
                 hist_obs = np.concatenate((hist_obs[1:], obs.reshape(1, -1)), axis=0)
 
+            if cfg.robot_config.obs_stack_order == "frame_major":
+                stacked_obs = hist_obs.reshape(1, -1)
+            else:
+                stacked_fields = []
+                field_offset = 0
+                for field_size in cfg.robot_config.obs_field_sizes:
+                    field_end = field_offset + field_size
+                    stacked_fields.append(hist_obs[:, field_offset:field_end].reshape(-1))
+                    field_offset = field_end
+                if field_offset != cfg.robot_config.num_single_obs:
+                    raise ValueError(
+                        f"Observation fields total {field_offset}, expected "
+                        f"{cfg.robot_config.num_single_obs}."
+                    )
+                stacked_obs = np.concatenate(stacked_fields).reshape(1, -1)
+
             policy_input = np.clip(
-                hist_obs.reshape(1, -1),
+                stacked_obs,
                 -cfg.robot_config.clip_observations,
                 cfg.robot_config.clip_observations,
             ).astype(np.float32)
@@ -312,6 +354,14 @@ def run_mujoco(policy, cfg, headless=False, no_video=False):
             out.release()
     else:
         viewer.close()
+
+    print(
+        "Simulation summary: "
+        f"min_base_height={min_base_height:.6f}, "
+        f"final_base_height={float(data.qpos[2]):.6f}, "
+        f"max_gravity_z={max_gravity_z:.6f}, "
+        f"final_gravity=[{final_gravity[0]:.6f}, {final_gravity[1]:.6f}, {final_gravity[2]:.6f}]"
+    )
 
      # --- Plotting Section (Using only low-frequency data) ---
 
@@ -414,6 +464,8 @@ if __name__ == '__main__':
                       help='Run headless without creating a MuJoCo renderer/video')
     parser.add_argument('--save-plots', action='store_true',
                       help='Save joint/base velocity plots after simulation')
+    parser.add_argument('--obs-stack-order', choices=('frame_major', 'obs_major'),
+                      default='frame_major', help='History layout expected by the ONNX policy')
     args = parser.parse_args()
     model_path = Path(args.load_model).expanduser()
     if not model_path.is_file():
@@ -433,14 +485,16 @@ if __name__ == '__main__':
 
         class robot_config:
             mjcf_joint_names = RPO_MJCF_JOINT_NAMES
-            kps = RPO_KPS
-            kds = RPO_KDS
+            kps = LOCOMOTION_KPS_MJCF
+            kds = LOCOMOTION_KDS_MJCF
             default_pos = LOCOMOTION_DEFAULT_POS_MJCF
             tau_limit = RPO_TAU_LIMIT
             frame_stack = 10
             num_actions = len(LOCOMOTION_POLICY_JOINT_NAMES)
             num_single_obs = 9 + 3 * num_actions
             num_observations = num_single_obs * frame_stack
+            obs_field_sizes = (3, 3, 3, num_actions, num_actions, num_actions)
+            obs_stack_order = args.obs_stack_order
             action_scale = 0.25
             clip_observations = 100.0
             clip_actions = 100.0
