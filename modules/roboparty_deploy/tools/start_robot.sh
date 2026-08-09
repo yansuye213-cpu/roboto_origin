@@ -22,12 +22,13 @@ print_error() {
 }
 
 show_usage() {
-    echo "用法: $0 [--robot ROBOT] [--policy POLICY]"
+    echo "用法: $0 [--robot ROBOT] [--policy POLICY] [--build|--no-build]"
     echo "      $0 [ROBOT] [POLICY]"
     echo
-    echo "默认: robot=rpo, policy=default"
+    echo "默认: robot=rpo, policy=default, build=on"
     echo "示例: $0 --robot rpo --policy amp"
     echo "示例: $0 rpo beyondmimic"
+    echo "示例: $0 --robot rpo --policy default --no-build"
 }
 
 validate_name() {
@@ -42,6 +43,7 @@ validate_name() {
 
 ROBOT="rpo"
 POLICY="default"
+BUILD_ON_START=1
 ROBOT_SET=0
 POLICY_SET=0
 
@@ -66,6 +68,14 @@ while [ $# -gt 0 ]; do
             POLICY="$2"
             POLICY_SET=1
             shift 2
+            ;;
+        --build)
+            BUILD_ON_START=1
+            shift
+            ;;
+        --no-build)
+            BUILD_ON_START=0
+            shift
             ;;
         --help|-h)
             show_usage
@@ -327,12 +337,19 @@ if ! command -v screen &> /dev/null; then
     exit 1
 fi
 
-# 编译推理包
-print_info "编译推理包..."
-colcon build --base-paths src --symlink-install || {
-    print_error "推理包编译失败"
+# 手动运行默认编译；自启动服务使用 --no-build，避免在开机阶段改写构建产物。
+if [ "$BUILD_ON_START" -eq 1 ]; then
+    print_info "编译推理包..."
+    colcon build --base-paths src --symlink-install || {
+        print_error "推理包编译失败"
+        exit 1
+    }
+elif [ ! -f install/setup.bash ]; then
+    print_error "工作空间尚未编译，无法使用 --no-build。请先运行 colcon build。"
     exit 1
-}
+else
+    print_info "跳过编译，使用现有 install 工作空间。"
+fi
 source install/setup.bash
 
 # 停止可能正在运行的screen会话
