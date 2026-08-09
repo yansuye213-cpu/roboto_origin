@@ -916,6 +916,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     constexpr size_t kButtonLB = 4;
     constexpr size_t kButtonRB = 5;
     constexpr size_t kButtonLSB = 11;
+    constexpr size_t kButtonRSB = 12;
     constexpr size_t kRequiredAxes = 6;
     constexpr size_t kRequiredBasicButtons = kButtonX + 1;
 
@@ -929,6 +930,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     const int button_lb = button(kButtonLB);
     const int button_rb = button(kButtonRB);
     const int button_lsb = button(kButtonLSB);
+    const int button_rsb = button(kButtonRSB);
 
     if (msg->axes.size() < kRequiredAxes ||
         msg->buttons.size() < kRequiredBasicButtons) {
@@ -1103,6 +1105,30 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         }
     }
     last_button_lsb_ = button_lsb;
+    if (button_rsb == 1 && button_rsb != last_button_rsb_) {
+        try {
+            if (is_running_.load()) {
+                reset_runtime_state();
+                RCLCPP_INFO(this->get_logger(), "Inference paused");
+            }
+            if (!robot_->is_init_.load()) {
+                RCLCPP_WARN(this->get_logger(),
+                            "Motors are not initialized, cannot enter policy default pose");
+            } else {
+                robot_->reset_joints(joint_default_angle_);
+                sync_action_reference(robot_->sample_joint_q());
+                RCLCPP_INFO(this->get_logger(),
+                            "Policy default pose reached; press B to start inference");
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Policy default pose failed: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Policy default pose failed with an unknown error");
+        }
+    }
+    last_button_rsb_ = button_rsb;
     if (has_motion_policy()) {
         if (button_rb == 1 && button_rb != last_button5_) {
             std::unique_lock<std::mutex> lock(mode_mutex_);

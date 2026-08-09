@@ -35,8 +35,9 @@ inference_node:
             [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
              1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
              1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-        policy_joint_limit_margin: 0.0
-        # Feedback-only tolerance; policy targets are still clamped to the exact limits below.
+        # Keep commanded targets inside the measured mechanical limits to absorb tracking overshoot.
+        policy_joint_limit_margin: 0.01
+        # Feedback-only tolerance; this does not expand the commanded target range.
         joint_limit_check_tolerance: 0.005
         # Real-robot URDF order; reset_joints converts these targets with motor_sign.
         reset_joint_angle:
@@ -215,14 +216,14 @@ inference_node:
              0.0000, 0.0000, 0.0000, 0.0000,
              0.0000, 0.0000, 0.0000, 0.0000]
         stand_kp:
-            [100.0, 100.0, 100.0, 100.0, 80.0, 60.0,
-             100.0, 100.0, 100.0, 100.0, 80.0, 60.0, 
+            [100.0, 100.0, 100.0, 100.0, 90.0, 90.0,
+             100.0, 100.0, 100.0, 100.0, 90.0, 90.0,
              30.0,
              40.0, 40.0, 40.0, 30.0,
              40.0, 40.0, 40.0, 30.0]
         stand_kd:
-            [3.3, 3.3, 4.2, 4.2, 4.0, 2.5,
-             3.3, 3.3, 4.2, 4.2, 4.0, 2.5,
+            [3.3, 3.3, 4.2, 4.2, 3.3, 3.3,
+             3.3, 3.3, 4.2, 4.2, 3.3, 3.3,
              1.5,
              2.0, 2.0, 2.0, 1.5,
              2.0, 2.0, 2.0, 1.5]

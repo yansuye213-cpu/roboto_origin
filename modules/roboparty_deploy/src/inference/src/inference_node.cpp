@@ -674,6 +674,7 @@ int main(int argc, char **argv) {
             RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode (available in beyondmimic / interrupt modes)");
         }
         RCLCPP_INFO(node->get_logger(), "Press 'LSB' to enter/exit stand mode");
+        RCLCPP_INFO(node->get_logger(), "Press 'RSB' to move to the policy default pose");
         if (node->has_motion_policy()){
             RCLCPP_INFO(node->get_logger(), "Press 'RB' to switch motion sequence (available in beyondmimic mode)");
         }

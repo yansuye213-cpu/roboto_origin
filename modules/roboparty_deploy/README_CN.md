@@ -314,6 +314,7 @@ screen -S joy_session -X quit
 - **LB 键**: 切换策略模式（在 beyondmimic / interrupt 模式下可用）
 - **LSB（左摇杆按下）**: 在站立模式与策略控制之间平滑切换
 - **RB 键**: 切换运动序列（在 beyondmimic 模式下可用）
+- **RSB（右摇杆按下）**: 平滑进入 policy 默认姿态
 - **右摇杆**: 控制前后左右移动
 - **LT/RT**: 控制转向（左 / 右旋转）
 
@@ -613,16 +614,18 @@ ros2 topic echo /joy --once
 - `LB`: 切换策略模式
 - `LSB`（左摇杆按下）: 在站立模式与策略控制之间平滑切换
 - `RB`: 切换运动序列
+- `RSB`（右摇杆按下）: 平滑进入 `joint_default_angle`
 
-首次验证默认位姿时，只使用：
+首次验证安全初始化姿态时，只使用：
 
 ```text
 X 使能电机
-A 复位默认位姿
+A 复位到安全初始化姿态
 X 失能电机
 ```
 
-不要先按 `B` 或 `LSB`。
+开始行走策略时，按 `X -> A -> RSB -> B`：先使能，复位到安全初始化姿态，
+再进入 policy 默认姿态，最后开始推理。不要从 A 的姿态直接按 `B`。
 
 ### 5. 常用 ROS 服务
 
@@ -756,8 +759,9 @@ URDF 限位，也不放宽策略目标夹紧范围。越界超过该容差时，
 3. 启动 inference_node
 4. 启动 joy_node
 5. X 使能，确认电机只变硬、不乱动
-6. A 复位，确认机器人缓慢回默认位姿
-7. 确认 IMU 正常后，再考虑 B 推理或 LSB 站立模式
+6. A 复位，确认机器人缓慢回安全初始化姿态
+7. RSB 进入 policy 默认姿态，确认姿态与训练默认姿态一致
+8. 确认 IMU 正常后，再按 B 开始推理
 ```
 cd ~/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy
 source /opt/ros/humble/setup.bash

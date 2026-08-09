@@ -248,7 +248,9 @@ class InferenceNode : public rclcpp::Node {
     std::vector<float> policy_transition_offset_;
     std::vector<float> policy_filtered_action_;
     std::vector<float> stand_kp_, stand_kd_;
-    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0;
+    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0,
+        last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0,
+        last_button_rsb_ = 0;
     std::atomic<int64_t> last_joy_message_ns_{0};
     std::atomic<bool> joy_watchdog_timed_out_{false};
     std::vector<PolicyRuntime> policies_;
