@@ -265,6 +265,70 @@ void InferenceNode::reset_policy_runtime(PolicyRuntime& policy) {
     policy.is_first_frame = true;
 }
 
+void InferenceNode::start_run_log() {
+    if (!run_logger_ || run_logger_->active()) {
+        return;
+    }
+    std::string error_message;
+    if (!run_logger_->start(active_policy().name, error_message)) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to start policy CSV log: %s",
+                     error_message.c_str());
+        return;
+    }
+    RCLCPP_INFO(this->get_logger(), "Policy CSV log started: %s",
+                std::filesystem::absolute(run_logger_->current_path()).c_str());
+}
+
+void InferenceNode::finish_run_log(const std::string& reason,
+                                   const std::string& detail,
+                                   bool clean_exit) {
+    if (!run_logger_ || !run_logger_->active()) {
+        return;
+    }
+    run_logger_->finish(reason, detail, clean_exit);
+    RCLCPP_INFO(this->get_logger(), "Policy CSV log finished: %s", reason.c_str());
+}
+
+void InferenceNode::record_policy_sample(size_t clamped_joint_count) {
+    if (!run_logger_ || !run_logger_->active()) {
+        return;
+    }
+
+    PolicyLogContext context;
+    {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        context.cmd_vx = cmd_vel_[0];
+        context.cmd_vy = cmd_vel_[1];
+        context.cmd_yaw = cmd_vel_[2];
+    }
+    if (quat_buffer_.size() == 4) {
+        Eigen::Quaternionf q(quat_buffer_[0], quat_buffer_[1],
+                             quat_buffer_[2], quat_buffer_[3]);
+        if (q.norm() > 1.0e-6f) {
+            q.normalize();
+            const Eigen::Matrix3f rotation = q.toRotationMatrix();
+            context.imu_roll = std::atan2(rotation(2, 1), rotation(2, 2));
+            context.imu_pitch = std::asin(
+                std::clamp(-rotation(2, 0), -1.0f, 1.0f));
+            const Eigen::Vector3f gravity_body =
+                q.conjugate() * Eigen::Vector3f(0.0f, 0.0f, -1.0f);
+            context.gravity_z = gravity_body.z();
+        }
+    }
+    if (ang_vel_buffer_.size() == 3) {
+        context.imu_wx = ang_vel_buffer_[0];
+        context.imu_wy = ang_vel_buffer_[1];
+        context.imu_wz = ang_vel_buffer_[2];
+    }
+    if (policy_transition_active_) {
+        const float duration = std::max(policy_transition_time_, dt_);
+        context.transition_phase = std::clamp(
+            policy_transition_elapsed_ / duration, 0.0f, 1.0f);
+    }
+    context.clamped_joint_count = clamped_joint_count;
+    run_logger_->record_sample(context);
+}
+
 void InferenceNode::start_stand_transition_locked() {
     stand_transition_elapsed_ = 0.0f;
     stand_transition_active_ = true;
@@ -309,6 +373,7 @@ void InferenceNode::start_policy_transition_locked(const std::vector<float>& cur
         std::unique_lock<std::mutex> lock(cmd_mutex_);
         std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
     }
+    start_run_log();
     is_running_.store(true);
 }
 
@@ -509,8 +574,13 @@ void InferenceNode::control() {
         auto loop_start = std::chrono::steady_clock::now();
         try {
             apply_action();
+            if (run_logger_ && run_logger_->active() && robot_->is_init_.load()) {
+                robot_->sample_telemetry(telemetry_snapshot_);
+                run_logger_->record_control(telemetry_snapshot_);
+            }
         } catch (const std::exception& e) {
             RCLCPP_FATAL(this->get_logger(), "Exception in control thread: %s", e.what());
+            finish_run_log("control_exception", e.what(), false);
             rclcpp::shutdown();
             return;
         }
@@ -557,6 +627,7 @@ void InferenceNode::inference() {
                     this->get_logger(), *this->get_clock(), 1000,
                     "Active policy %s is disabled: %s",
                     policy.name.c_str(), policy.disabled_reason.c_str());
+                finish_run_log("policy_disabled", policy.disabled_reason, false);
                 is_running_.store(false);
                 mode_lock.unlock();
                 std::this_thread::sleep_for(period);
@@ -589,9 +660,9 @@ void InferenceNode::inference() {
                 policy.ctx->input_names_raw.data(), policy.ctx->input_tensor.get(), policy.ctx->num_inputs,
                 policy.ctx->output_names_raw.data(), policy.ctx->output_tensor.get(), policy.ctx->num_outputs);
 
+            size_t clamped_joint_count = 0;
             {
                 std::unique_lock<std::mutex> lock(act_mutex_);
-                size_t clamped_joint_count = 0;
                 for (size_t i = 0; i < usd2urdf_.size(); i++) {
                     const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
                     const float action =
@@ -631,8 +702,10 @@ void InferenceNode::inference() {
                 }
                 publish_action();
             }
+            record_policy_sample(clamped_joint_count);
         } catch (const std::exception& e) {
             RCLCPP_FATAL(this->get_logger(), "Exception in inference thread: %s", e.what());
+            finish_run_log("inference_exception", e.what(), false);
             rclcpp::shutdown();
             return;
         }

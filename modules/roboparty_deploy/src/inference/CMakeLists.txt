@@ -105,6 +105,7 @@ target_link_libraries(robot_py PUBLIC robot)
 
 add_executable(inference_node
   src/inference_node.cpp
+  src/run_logger.cpp
   src/ros_interface.cpp
   src/obs_manager.cpp
   src/standing_stabilizer.cpp

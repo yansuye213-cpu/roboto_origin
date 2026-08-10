@@ -29,6 +29,7 @@
 #include "utils/motion_loader.hpp"
 #include <std_srvs/srv/trigger.hpp>
 #include "robot_interface.hpp"
+#include "run_logger.hpp"
 #include "standing_stabilizer.hpp"
 
 enum class ObsStackOrder {
@@ -143,6 +144,24 @@ class InferenceNode : public rclcpp::Node {
         initialize_runtime_state();
         reset_runtime_state();
 
+        if (run_log_enabled_) {
+            std::vector<std::string> joint_names =
+                stand_stabilizer_config_.whole_body_joint_order;
+            if (joint_names.size() != static_cast<size_t>(joint_num_)) {
+                joint_names.resize(joint_num_);
+                for (int i = 0; i < joint_num_; ++i) {
+                    joint_names[i] = "joint_" + std::to_string(i + 1);
+                }
+                RCLCPP_WARN(this->get_logger(),
+                            "Run logger is using generic joint names because "
+                            "stand_whole_body_joint_order does not contain %d joints",
+                            joint_num_);
+            }
+            run_logger_ = std::make_unique<RunLogger>(run_log_directory_,
+                                                       std::move(joint_names));
+            telemetry_snapshot_.resize(static_cast<size_t>(joint_num_));
+        }
+
         auto data_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
         joy_subscription_ = this->create_subscription<sensor_msgs::msg::Joy>(
             "/joy", data_qos, std::bind(&InferenceNode::subs_joy_callback, this, std::placeholders::_1));
@@ -195,6 +214,7 @@ class InferenceNode : public rclcpp::Node {
         if (control_thread_.joinable()) {
             control_thread_.join();
         }
+        finish_run_log("node_shutdown", "node exited while policy was active", false);
         reset_runtime_state();
         if(robot_){
             robot_.reset();
@@ -208,6 +228,8 @@ class InferenceNode : public rclcpp::Node {
     ControlMode control_mode_ = ControlMode::Policy;
     std::string robot_config_path_;
     std::string perception_obs_topic_;
+    std::string run_log_directory_;
+    bool run_log_enabled_ = false;
     size_t current_motion_policy_idx_ = 0;
     int active_policy_idx_ = 0;
     int perception_obs_num_, joint_num_, interrupt_action_size_;
@@ -225,6 +247,8 @@ class InferenceNode : public rclcpp::Node {
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
     std::thread inference_thread_;
     std::thread control_thread_;
+    std::unique_ptr<RunLogger> run_logger_;
+    RobotInterface::TelemetrySnapshot telemetry_snapshot_;
     float act_alpha_;
     float dt_;
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
@@ -275,6 +299,10 @@ class InferenceNode : public rclcpp::Node {
     void start_policy_transition_locked(const std::vector<float>& current_joint_q);
     void enter_safe_stand_locked(const std::vector<float>& current_joint_q);
     void sync_action_reference(const std::vector<float>& joint_q);
+    void start_run_log();
+    void finish_run_log(const std::string& reason, const std::string& detail,
+                        bool clean_exit);
+    void record_policy_sample(size_t clamped_joint_count);
     PolicyRuntime& active_policy();
     const PolicyRuntime& active_policy() const;
 

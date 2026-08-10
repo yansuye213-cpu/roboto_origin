@@ -627,6 +627,19 @@ X 失能电机
 开始行走策略时，按 `X -> A -> RSB -> B`：先使能，复位到安全初始化姿态，
 再进入 policy 默认姿态，最后开始推理。不要从 A 的姿态直接按 `B`。
 
+默认行走配置会在按 `B` 进入推理时开始记录，并在按 `RSB` 退出推理时结束。
+每次运行只生成一个 CSV：`runtime_logs/run_<时间>.ok.csv`。运行中或未正常
+结束的文件后缀分别为 `.active.csv` 和 `.error.csv`；程序下次启动记录时会将
+遗留的 `.active.csv` 改名为 `.unclean.csv`。相对路径 `runtime_logs/` 固定解析为
+`modules/roboparty_deploy/runtime_logs/`，且不会被 Git 跟踪。
+
+CSV 每个 policy 周期记录一行。`q_actual_rad`、`dq_actual_rad_s` 和
+`q_target_rad` 分别是实际角度、实际角速度和最终发送目标；
+`tau_feedback_peak_nm` 与 `tau_demand_peak_nm` 是该 policy 周期内以 250 Hz
+采集的有符号力矩峰值。两个 `*_utilization` 使用 DM 型号硬件最大力矩计算，
+接近 `1.0` 表示接近最大力矩，大于 `1.0` 的 demand 表示控制器请求已超出
+电机能力。温度单位为摄氏度，DM 故障会同时写入可读的 `motor_fault` 事件行。
+
 ### 5. 常用 ROS 服务
 
 终端 3：

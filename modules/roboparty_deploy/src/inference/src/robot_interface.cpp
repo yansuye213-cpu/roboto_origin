@@ -196,7 +196,9 @@ void RobotInterface::apply_action(std::vector<float> p,
             joint_vel_[motor2urdf_[idx]] = motor->get_motor_spd() * robot_cfg_->motor_sign_[idx];
             joint_tau_[motor2urdf_[idx]] = motor->get_motor_current() * robot_cfg_->motor_sign_[idx];
             if (motor->get_response_count() > offline_threshold_) {
-                throw std::runtime_error("Motor id " + std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
+                throw std::runtime_error(
+                    "Motor " + motor->get_can_name() + " ID" +
+                    std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
             }
         });
 
@@ -366,13 +368,50 @@ std::vector<float> RobotInterface::sample_joint_q() {
         joint_vel_[motor2urdf_[idx]] = motor->get_motor_spd() * robot_cfg_->motor_sign_[idx];
         joint_tau_[motor2urdf_[idx]] = motor->get_motor_current() * robot_cfg_->motor_sign_[idx];
         if (motor->get_response_count() > offline_threshold_) {
-            throw std::runtime_error("Motor id " + std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
+            throw std::runtime_error(
+                "Motor " + motor->get_can_name() + " ID" +
+                std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
         }
     });
     if (!close_chain_joint_idx_.empty() && ankle_decouple_) {
         forward_close_chain();
     }
     return joint_q_;
+}
+
+void RobotInterface::sample_telemetry(TelemetrySnapshot& snapshot) {
+    const size_t joint_count = joint_q_.size();
+    if (snapshot.joint_q.size() != joint_count) {
+        snapshot.resize(joint_count);
+    }
+
+    // Keep the same joint -> motor lock order used by apply_action().
+    std::unique_lock<std::mutex> joint_lock(joint_mutex_);
+    std::unique_lock<std::mutex> motor_lock(motors_mutex_);
+    for (size_t motor_idx = 0; motor_idx < motors_.size(); ++motor_idx) {
+        const size_t joint_idx = static_cast<size_t>(motor2urdf_[motor_idx]);
+        const float q = joint_q_[joint_idx];
+        const float dq = joint_vel_[joint_idx];
+        const float q_target = motor_pos_target_[motor_idx];
+        const float dq_target = motor_vel_target_[motor_idx];
+        const float tau_ff = motor_tau_target_[motor_idx];
+        const float kp = motor_kp_target_[motor_idx];
+        const float kd = motor_kd_target_[motor_idx];
+
+        snapshot.joint_q[joint_idx] = q;
+        snapshot.joint_vel[joint_idx] = dq;
+        snapshot.joint_target[joint_idx] = q_target;
+        snapshot.feedback_tau[joint_idx] = joint_tau_[joint_idx];
+        snapshot.demand_tau[joint_idx] =
+            kp * (q_target - q) + kd * (dq_target - dq) + tau_ff;
+        snapshot.hardware_tau_limit[joint_idx] =
+            motors_[motor_idx]->get_motor_torque_limit();
+        snapshot.motor_temperature[joint_idx] =
+            motors_[motor_idx]->get_motor_temperature();
+        snapshot.mos_temperature[joint_idx] =
+            motors_[motor_idx]->get_motor_mos_temperature();
+        snapshot.error_code[joint_idx] = motors_[motor_idx]->get_error_id();
+    }
 }
 
 std::string RobotInterface::joint_motor_label(size_t joint_idx) const {

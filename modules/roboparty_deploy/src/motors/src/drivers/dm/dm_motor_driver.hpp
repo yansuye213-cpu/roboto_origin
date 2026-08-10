@@ -113,6 +113,12 @@ class DmMotorDriver : public MotorDriver {
     virtual void reset_motor_id() override {};
     virtual void refresh_motor_status() override;
     virtual void clear_motor_error() override;
+    virtual float get_motor_mos_temperature() override {
+        return static_cast<float>(mos_temperature_.load());
+    }
+    virtual float get_motor_torque_limit() override {
+        return limit_param_.TauMax;
+    }
 
    private:
     uint16_t master_id_;

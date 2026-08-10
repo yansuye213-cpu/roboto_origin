@@ -19,6 +19,8 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("act_alpha", 0.9);
     this->declare_parameter<int>("intra_threads", -1);
     this->declare_parameter<std::string>("perception_obs_topic", "elevation_data");
+    this->declare_parameter<bool>("run_log_enabled", false);
+    this->declare_parameter<std::string>("run_log_directory", "runtime_logs");
     this->declare_parameter<int>("joint_num", 21);
     this->declare_parameter<int>("interrupt_action_size", 8);
     this->declare_parameter<int>("decimation", 10);
@@ -212,6 +214,14 @@ void InferenceNode::load_config() {
     this->get_parameter("act_alpha", act_alpha_);
     this->get_parameter("intra_threads", intra_threads_);
     this->get_parameter("perception_obs_topic", perception_obs_topic_);
+    this->get_parameter("run_log_enabled", run_log_enabled_);
+    this->get_parameter("run_log_directory", run_log_directory_);
+    if (std::filesystem::path(run_log_directory_).is_relative()) {
+        const std::filesystem::path deploy_root =
+            (std::filesystem::path(ROOT_DIR) / ".." / "..").lexically_normal();
+        run_log_directory_ =
+            (deploy_root / run_log_directory_).lexically_normal().string();
+    }
     this->get_parameter("joint_num", joint_num_);
     this->get_parameter("interrupt_action_size", interrupt_action_size_);
     this->get_parameter("decimation", decimation_);
@@ -898,6 +908,8 @@ void InferenceNode::load_config() {
     print_vector<float>("stand_kd", stand_kd_);
     print_vector<double>("joint_limits", joint_limits_);
     RCLCPP_INFO(this->get_logger(), "gravity_z_upper: %f", gravity_z_upper_);
+    RCLCPP_INFO(this->get_logger(), "run_log: enabled=%s directory=%s",
+                run_log_enabled_ ? "true" : "false", run_log_directory_.c_str());
 }
 
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
@@ -907,6 +919,9 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         std::memory_order_relaxed);
     if (joy_watchdog_timed_out_.exchange(false)) {
         RCLCPP_INFO(this->get_logger(), "Joystick connection restored");
+        if (run_logger_) {
+            run_logger_->record_event("joystick_restored");
+        }
     }
 
     constexpr size_t kButtonA = 0;
@@ -961,6 +976,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     if (button_x == 1 && button_x != last_button0_) {
         try {
             if(is_running_.load()){
+                finish_run_log("button_x", "motors deinitialized during policy", false);
                 reset_runtime_state();
                 RCLCPP_INFO(this->get_logger(), "Inference paused");
             }
@@ -980,6 +996,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     if (button_a == 1 && button_a != last_button1_) {
         try {
             if (is_running_.load()){
+                finish_run_log("button_a", "reset requested during policy", false);
                 reset_runtime_state();
                 RCLCPP_INFO(this->get_logger(), "Inference paused");
             }
@@ -1004,6 +1021,9 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 const std::vector<float> current_joint_q = robot_->sample_joint_q();
                 std::unique_lock<std::mutex> lock(mode_mutex_);
                 if (control_mode_ == ControlMode::Policy && is_running_.load()) {
+                    lock.unlock();
+                    finish_run_log("button_b", "policy manually stopped", true);
+                    lock.lock();
                     enter_safe_stand_locked(current_joint_q);
                     RCLCPP_INFO(this->get_logger(),
                                 "Policy paused; transitioning to and holding safe stand pose");
@@ -1030,6 +1050,11 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         {
             std::unique_lock<std::mutex> lock(cmd_mutex_);
             std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        }
+        if (run_logger_) {
+            run_logger_->record_event(
+                "command_source_changed",
+                is_joy_control_.load() ? "joy" : "cmd_vel");
         }
         RCLCPP_INFO(this->get_logger(), "Controlled by %s", is_joy_control_.load() ? "joy" : "/cmd_vel");
     }
@@ -1096,6 +1121,9 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                                     policy_transition_time_);
                     }
                 } else {
+                    lock.unlock();
+                    finish_run_log("button_lsb", "policy left for stand mode", true);
+                    lock.lock();
                     enter_safe_stand_locked(current_joint_q);
                     RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
                 }
@@ -1108,6 +1136,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     if (button_rsb == 1 && button_rsb != last_button_rsb_) {
         try {
             if (is_running_.load()) {
+                finish_run_log("button_rsb", "policy stopped before default pose", true);
                 reset_runtime_state();
                 RCLCPP_INFO(this->get_logger(), "Inference paused");
             }
@@ -1142,7 +1171,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         last_button5_ = button_rb;
     }
     last_button0_ = button_x;
-    last_button1_ = button_a;
+    last_button1_ = button_a;       
     last_button2_ = button_b;
     last_button3_ = button_y;
 }
@@ -1168,6 +1197,11 @@ void InferenceNode::check_joy_watchdog() {
         std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
     }
     if (!joy_watchdog_timed_out_.exchange(true)) {
+        if (run_logger_) {
+            run_logger_->record_event(
+                "joystick_timeout",
+                "velocity command reset after " + std::to_string(elapsed_sec) + " s");
+        }
         RCLCPP_WARN(
             this->get_logger(),
             "Joystick timeout after %.3f s; velocity command reset to zero",
@@ -1345,6 +1379,8 @@ void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigg
                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     try {
         if (is_running_.load()) {
+            finish_run_log("deinit_motors_service",
+                           "motors deinitialized during policy", false);
             reset_runtime_state();
         }
         robot_->deinit_motors();
@@ -1407,6 +1443,9 @@ void InferenceNode::stop_inference_srv(const std::shared_ptr<std_srvs::srv::Trig
     try {
         const std::vector<float> current_joint_q = robot_->sample_joint_q();
         std::unique_lock<std::mutex> lock(mode_mutex_);
+        lock.unlock();
+        finish_run_log("stop_inference_service", "policy manually stopped", true);
+        lock.lock();
         enter_safe_stand_locked(current_joint_q);
         response->success = true;
         response->message = "Policy stopped; safe stand hold remains active";
