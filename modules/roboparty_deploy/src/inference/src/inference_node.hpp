@@ -254,8 +254,9 @@ class InferenceNode : public rclcpp::Node {
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
         obs_scales_gravity_b_, clip_observations_;
     float action_scale_, clip_actions_, policy_joint_limit_margin_, joint_limit_check_tolerance_;
-    double joy_timeout_sec_;
+    double joy_timeout_sec_, joy_linear_axis_deadzone_;
     std::vector<double> clip_cmd_, joint_default_angle_, policy_joint_signs_, reset_joint_angle_, stand_joint_angle_, joint_limits_;
+    std::vector<double> joy_linear_axis_thresholds_, joy_linear_speed_levels_;
     std::vector<long int> usd2urdf_;
     std::vector<std::string> joint_limit_check_ignored_joints_;
     float gravity_z_upper_;

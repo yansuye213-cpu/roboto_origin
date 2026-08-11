@@ -36,6 +36,11 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<long int>>("usd2urdf", std::vector<long int>{});
     this->declare_parameter<std::vector<double>>("clip_cmd", std::vector<double>{});
     this->declare_parameter<double>("joy_timeout_sec", 0.5);
+    this->declare_parameter<double>("joy_linear_axis_deadzone", 0.1);
+    this->declare_parameter<std::vector<double>>(
+        "joy_linear_axis_thresholds", std::vector<double>{0.5, 0.7});
+    this->declare_parameter<std::vector<double>>(
+        "joy_linear_speed_levels", std::vector<double>{0.5, 0.7, 1.0});
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("policy_joint_signs", std::vector<double>{});
     this->declare_parameter<float>("policy_joint_limit_margin", 0.0);
@@ -239,6 +244,9 @@ void InferenceNode::load_config() {
     this->get_parameter("usd2urdf", usd2urdf_);
     this->get_parameter("clip_cmd", clip_cmd_);
     this->get_parameter("joy_timeout_sec", joy_timeout_sec_);
+    this->get_parameter("joy_linear_axis_deadzone", joy_linear_axis_deadzone_);
+    this->get_parameter("joy_linear_axis_thresholds", joy_linear_axis_thresholds_);
+    this->get_parameter("joy_linear_speed_levels", joy_linear_speed_levels_);
     this->get_parameter("joint_default_angle", joint_default_angle_);
     this->get_parameter("policy_joint_signs", policy_joint_signs_);
     this->get_parameter("policy_joint_limit_margin", policy_joint_limit_margin_);
@@ -446,6 +454,25 @@ void InferenceNode::load_config() {
     }
     if (joy_timeout_sec_ < 0.0) {
         throw std::runtime_error("joy_timeout_sec must be non-negative");
+    }
+    if (joy_linear_axis_thresholds_.size() != 2 ||
+        joy_linear_speed_levels_.size() != 3) {
+        throw std::runtime_error(
+            "joy linear mapping requires 2 axis thresholds and 3 speed levels");
+    }
+    if (joy_linear_axis_deadzone_ < 0.0 ||
+        joy_linear_axis_deadzone_ >= joy_linear_axis_thresholds_[0] ||
+        joy_linear_axis_thresholds_[0] >= joy_linear_axis_thresholds_[1] ||
+        joy_linear_axis_thresholds_[1] > 1.0) {
+        throw std::runtime_error(
+            "joy linear axis mapping must satisfy 0 <= deadzone < threshold0 "
+            "< threshold1 <= 1");
+    }
+    if (joy_linear_speed_levels_[0] <= 0.0 ||
+        joy_linear_speed_levels_[0] > joy_linear_speed_levels_[1] ||
+        joy_linear_speed_levels_[1] > joy_linear_speed_levels_[2]) {
+        throw std::runtime_error(
+            "joy linear speed levels must be positive and non-decreasing");
     }
     if (stand_joint_angle_.empty()) {
         stand_joint_angle_ = joint_default_angle_;
@@ -749,6 +776,11 @@ void InferenceNode::load_config() {
     print_vector<long int>("usd2urdf", usd2urdf_);
     print_vector<double>("clip_cmd", clip_cmd_);
     RCLCPP_INFO(this->get_logger(), "joy_timeout_sec: %f", joy_timeout_sec_);
+    RCLCPP_INFO(this->get_logger(), "joy_linear_axis_deadzone: %f",
+                joy_linear_axis_deadzone_);
+    print_vector<double>("joy_linear_axis_thresholds",
+                         joy_linear_axis_thresholds_);
+    print_vector<double>("joy_linear_speed_levels", joy_linear_speed_levels_);
     print_vector<double>("joint_default_angle", joint_default_angle_);
     print_vector<double>("policy_joint_signs", policy_joint_signs_);
     RCLCPP_INFO(this->get_logger(), "policy_joint_limit_margin: %f", policy_joint_limit_margin_);
@@ -978,8 +1010,21 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         if (msg->axes.size() < kRequiredAxes) {
             std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
         } else {
-            cmd_vel_[0] = std::clamp(msg->axes[4] * clip_cmd_[1], clip_cmd_[0], clip_cmd_[1]);
-            cmd_vel_[1] = std::clamp(msg->axes[3] * clip_cmd_[3], clip_cmd_[2], clip_cmd_[3]);
+            const auto map_linear_axis = [this](float axis) {
+                const double magnitude = std::abs(static_cast<double>(axis));
+                if (magnitude <= joy_linear_axis_deadzone_) {
+                    return 0.0;
+                }
+                const size_t level =
+                    magnitude <= joy_linear_axis_thresholds_[0] ? 0 :
+                    magnitude <= joy_linear_axis_thresholds_[1] ? 1 : 2;
+                return std::copysign(joy_linear_speed_levels_[level],
+                                     static_cast<double>(axis));
+            };
+            cmd_vel_[0] = static_cast<float>(std::clamp(
+                map_linear_axis(msg->axes[4]), clip_cmd_[0], clip_cmd_[1]));
+            cmd_vel_[1] = static_cast<float>(std::clamp(
+                map_linear_axis(msg->axes[3]), clip_cmd_[2], clip_cmd_[3]));
             if (msg->axes[2] < 0) {
                 cmd_vel_[2] = std::clamp(-msg->axes[2] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
             } else if (msg->axes[5] < 0) {
