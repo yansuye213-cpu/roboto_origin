@@ -1,9 +1,9 @@
 inference_node:
     ros__parameters:
-        model_names: ["policy.onnx"]
+        model_names: ["policy_4999.onnx"]
         obs_layouts:
           - "ang_vel:3, gravity_b:3, cmd_vel:3, dof_pos:21, dof_vel:21, last_action:21"
-        frame_stacks: [10]
+        frame_stacks: [1]
         obs_stack_orders: ["frame_major"]
         act_alpha: 1.0
         joint_num: 21
@@ -28,8 +28,8 @@ inference_node:
              -1.0, 1.0]
         joy_timeout_sec: 0.5
         joint_default_angle:
-            [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
-             -0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
+            [-0.15, 0.0, 0.0, 0.25, -0.1, 0.0,
+             -0.15, 0.0, 0.0, 0.25, -0.1, 0.0,
              0.0,
              -0.18, 0.25, 0.0, -0.3,
              -0.18, -0.25, 0.0, -0.3]
