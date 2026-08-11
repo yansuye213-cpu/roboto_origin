@@ -40,6 +40,8 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<double>>("policy_joint_signs", std::vector<double>{});
     this->declare_parameter<float>("policy_joint_limit_margin", 0.0);
     this->declare_parameter<float>("joint_limit_check_tolerance", 0.005);
+    this->declare_parameter<std::vector<std::string>>(
+        "joint_limit_check_ignored_joints", std::vector<std::string>{});
     this->declare_parameter<std::vector<double>>("reset_joint_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_joint_angle", std::vector<double>{});
     this->declare_parameter<float>("stand_transition_time", 1.5);
@@ -241,6 +243,8 @@ void InferenceNode::load_config() {
     this->get_parameter("policy_joint_signs", policy_joint_signs_);
     this->get_parameter("policy_joint_limit_margin", policy_joint_limit_margin_);
     this->get_parameter("joint_limit_check_tolerance", joint_limit_check_tolerance_);
+    this->get_parameter("joint_limit_check_ignored_joints",
+                        joint_limit_check_ignored_joints_);
     this->get_parameter("reset_joint_angle", reset_joint_angle_);
     this->get_parameter("stand_joint_angle", stand_joint_angle_);
     this->get_parameter("stand_transition_time", stand_transition_time_);
@@ -583,6 +587,16 @@ void InferenceNode::load_config() {
     if (!joint_limits_.empty() && joint_limits_.size() != static_cast<size_t>(joint_num_ * 2)) {
         throw std::runtime_error("joint_limits must be empty or contain 2 values per joint");
     }
+    for (const std::string& ignored_joint : joint_limit_check_ignored_joints_) {
+        if (std::find(stand_stabilizer_config_.whole_body_joint_order.begin(),
+                      stand_stabilizer_config_.whole_body_joint_order.end(),
+                      ignored_joint) ==
+            stand_stabilizer_config_.whole_body_joint_order.end()) {
+            throw std::runtime_error(
+                "joint_limit_check_ignored_joints contains unknown joint: " +
+                ignored_joint);
+        }
+    }
     stand_stabilizer_config_.joint_limits = joint_limits_;
     stand_stabilizer_ = std::make_unique<StandingStabilizer>(stand_stabilizer_config_);
     for (const std::string& diagnostic_line : stand_stabilizer_->diagnostics()) {
@@ -739,6 +753,8 @@ void InferenceNode::load_config() {
     print_vector<double>("policy_joint_signs", policy_joint_signs_);
     RCLCPP_INFO(this->get_logger(), "policy_joint_limit_margin: %f", policy_joint_limit_margin_);
     RCLCPP_INFO(this->get_logger(), "joint_limit_check_tolerance: %f", joint_limit_check_tolerance_);
+    print_vector<std::string>("joint_limit_check_ignored_joints",
+                              joint_limit_check_ignored_joints_);
     print_vector<double>("reset_joint_angle", reset_joint_angle_);
     print_vector<double>("stand_joint_angle", stand_joint_angle_);
     RCLCPP_INFO(this->get_logger(), "stand_transition_time: %f", stand_transition_time_);

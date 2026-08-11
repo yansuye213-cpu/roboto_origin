@@ -781,6 +781,7 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 ./tools/start_robot.sh --robot rpo --policy default
 
+sudo nmcli con up limrobot-direct
 ssh limrobot@192.168.55.2
 
 source /home/yansuye/miniconda3/bin/activate

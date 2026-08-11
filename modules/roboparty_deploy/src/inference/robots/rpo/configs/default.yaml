@@ -42,6 +42,10 @@ inference_node:
         policy_joint_limit_margin: 0.01
         # Feedback-only tolerance; this does not expand the commanded target range.
         joint_limit_check_tolerance: 0.005
+        # Test only: keep target clamping, but do not stop inference when ankle pitch feedback overshoots.
+        joint_limit_check_ignored_joints:
+          - "left_ankle_pitch_joint"
+          - "right_ankle_pitch_joint"
         # Real-robot URDF order; reset_joints converts these targets with motor_sign.
         reset_joint_angle:
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
