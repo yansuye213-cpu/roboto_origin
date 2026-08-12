@@ -451,21 +451,27 @@ void RobotInterface::init_motors() {
 }
 
 void RobotInterface::deinit_motors() {
-    exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
-        motor->clear_motor_error();
-    });
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Block new control commands immediately, even if a later deinit command fails.
+    is_init_.store(false);
     for (int attempt = 0; attempt < 3; ++attempt) {
         exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
             motor->deinit_motor();
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    is_init_.store(false);
+    exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
+        motor->clear_motor_error();
+    });
 }
 
 void RobotInterface::motors_mit_cmd() {
+    if (!is_init_.load()) {
+        return;
+    }
     std::unique_lock<std::mutex> lock(motors_mutex_);
+    if (!is_init_.load()) {
+        return;
+    }
     std::vector<std::function<void()>> tasks;
     size_t count = 0;
     for (size_t bus = 0; bus < motors_cfg_->motor_interface_.size(); ++bus) {

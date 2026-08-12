@@ -1005,6 +1005,20 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
             kRequiredBasicButtons);
     }
 
+    if (runtime_fault_handling_.load()) {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        last_button0_ = button_x;
+        last_button1_ = button_a;
+        last_button2_ = button_b;
+        last_button3_ = button_y;
+        last_button4_ = button_lb;
+        last_button5_ = button_rb;
+        last_button_lsb_ = button_lsb;
+        last_button_rsb_ = button_rsb;
+        return;
+    }
+
     if (is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
         if (msg->axes.size() < kRequiredAxes) {
@@ -1035,23 +1049,33 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         }
     }
     if (button_x == 1 && button_x != last_button0_) {
-        try {
-            if(is_running_.load()){
-                finish_run_log("button_x", "motors deinitialized during policy", false);
-                reset_runtime_state();
-                RCLCPP_INFO(this->get_logger(), "Inference paused");
+        if (runtime_fault_handling_.load()) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Runtime fault handling is still disabling motors; X ignored");
+        } else {
+            try {
+                std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+                if (runtime_fault_handling_.load()) {
+                    RCLCPP_WARN(this->get_logger(),
+                                "Runtime fault handling is still disabling motors; X ignored");
+                } else if(is_running_.load()){
+                    finish_run_log("button_x", "motors deinitialized during policy", false);
+                    reset_runtime_state();
+                    RCLCPP_INFO(this->get_logger(), "Inference paused");
+                    robot_->deinit_motors();
+                    RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
+                } else if (robot_->is_init_.load()){
+                    robot_->deinit_motors();
+                    RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
+                } else {
+                    robot_->init_motors();
+                    RCLCPP_INFO(this->get_logger(), "Motors initialized");
+                }
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed: %s", e.what());
+            } catch (...) {
+                RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed with an unknown error");
             }
-            if (robot_->is_init_.load()){
-                robot_->deinit_motors();
-                RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
-            } else {
-                robot_->init_motors();
-                RCLCPP_INFO(this->get_logger(), "Motors initialized");
-            }
-        } catch (const std::exception& e) {
-            RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed: %s", e.what());
-        } catch (...) {
-            RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed with an unknown error");
         }
     }
     if (button_a == 1 && button_a != last_button1_) {
@@ -1076,7 +1100,11 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     }
     if (button_b == 1 && button_b != last_button2_) {
         try {
-            if (!robot_->is_init_.load()) {
+            std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+            if (runtime_fault_handling_.load()) {
+                RCLCPP_WARN(this->get_logger(),
+                            "Runtime fault handling is still disabling motors; B ignored");
+            } else if (!robot_->is_init_.load()) {
                 RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot toggle policy control");
             } else {
                 const std::vector<float> current_joint_q = robot_->sample_joint_q();
@@ -1421,6 +1449,17 @@ void InferenceNode::clear_errors_srv(const std::shared_ptr<std_srvs::srv::Trigge
 
 void InferenceNode::init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                     std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    if (runtime_fault_handling_.load()) {
+        response->success = false;
+        response->message = "Runtime fault handling is still disabling motors.";
+        return;
+    }
+    std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+    if (runtime_fault_handling_.load()) {
+        response->success = false;
+        response->message = "Runtime fault handling is still disabling motors.";
+        return;
+    }
     if (robot_->is_init_.load()) {
         response->success = false;
         response->message = "Motors are already initialized, cannot init motors.";
@@ -1438,6 +1477,7 @@ void InferenceNode::init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger
 
 void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
     try {
         if (is_running_.load()) {
             finish_run_log("deinit_motors_service",
@@ -1455,6 +1495,12 @@ void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigg
 
 void InferenceNode::start_inference_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                         std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+    if (runtime_fault_handling_.load()) {
+        response->success = false;
+        response->message = "Runtime fault handling is still disabling motors.";
+        return;
+    }
     {
         std::unique_lock<std::mutex> lock(mode_mutex_);
         if (control_mode_ == ControlMode::Policy && is_running_.load()) {

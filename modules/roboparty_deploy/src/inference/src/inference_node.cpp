@@ -289,6 +289,76 @@ void InferenceNode::finish_run_log(const std::string& reason,
     RCLCPP_INFO(this->get_logger(), "Policy CSV log finished: %s", reason.c_str());
 }
 
+void InferenceNode::handle_runtime_fault(const std::string& source,
+                                         const std::string& detail) noexcept {
+    bool expected = false;
+    if (!runtime_fault_handling_.compare_exchange_strong(expected, true)) {
+        return;
+    }
+
+    // Stop producing commands before touching motor state. The node and its
+    // worker threads remain alive so the operator can initialize and retry.
+    is_running_.store(false);
+    const bool motors_were_initialized =
+        robot_ && robot_->is_init_.exchange(false);
+    {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+
+    if (run_logger_ && run_logger_->active()) {
+        try {
+            run_logger_->record_event("runtime_fault", source + ": " + detail);
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Failed to enqueue runtime fault event");
+        }
+    }
+
+    std::string final_detail = detail;
+    try {
+        std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+        // A start request that was already in progress may have raced with the
+        // first store. Reassert the stopped state while lifecycle operations
+        // are serialized, then send the hardware disable commands.
+        is_running_.store(false);
+        const bool motors_initialized_after_lock =
+            robot_ && robot_->is_init_.exchange(false);
+        if (robot_ &&
+            (motors_were_initialized || motors_initialized_after_lock)) {
+            robot_->deinit_motors();
+        }
+    } catch (const std::exception& e) {
+        final_detail += "; motor deinit failed: ";
+        final_detail += e.what();
+        RCLCPP_ERROR(this->get_logger(),
+                     "Motor deinitialization after runtime fault failed: %s",
+                     e.what());
+    } catch (...) {
+        final_detail += "; motor deinit failed with an unknown error";
+        RCLCPP_ERROR(this->get_logger(),
+                     "Motor deinitialization after runtime fault failed with "
+                     "an unknown error");
+    }
+
+    try {
+        finish_run_log(source, final_detail, false);
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Failed to finalize policy CSV after runtime fault: %s",
+                     e.what());
+    } catch (...) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Failed to finalize policy CSV after runtime fault");
+    }
+
+    RCLCPP_ERROR(this->get_logger(),
+                 "Runtime fault handled without stopping the node: %s: %s. "
+                 "Motors are disabled; initialize and prepare the robot before retrying.",
+                 source.c_str(), final_detail.c_str());
+    runtime_fault_handling_.store(false);
+}
+
 void InferenceNode::record_policy_sample(size_t clamped_joint_count) {
     if (!run_logger_ || !run_logger_->active()) {
         return;
@@ -402,9 +472,12 @@ void InferenceNode::apply_stand_action() {
     const StandingStabilizer::Measurement measurement =
         stand_stabilizer_->measure(quat_buffer_, ang_vel_buffer_);
     if (measurement.gravity_z > gravity_z_upper_) {
-        RCLCPP_FATAL(this->get_logger(), "Robot fell down in stand mode! Shutting down...");
-        rclcpp::shutdown();
-        throw std::runtime_error("Robot fell down in stand mode");
+        RCLCPP_ERROR(this->get_logger(),
+                     "Robot fell down in stand mode; disabling motors and stopping control");
+        throw std::runtime_error(
+            "Robot fell down in stand mode: gravity_z=" +
+            std::to_string(measurement.gravity_z) +
+            ", threshold=" + std::to_string(gravity_z_upper_));
     }
 
     std::vector<float> target(joint_num_, 0.0f);
@@ -579,10 +652,12 @@ void InferenceNode::control() {
                 run_logger_->record_control(telemetry_snapshot_);
             }
         } catch (const std::exception& e) {
-            RCLCPP_FATAL(this->get_logger(), "Exception in control thread: %s", e.what());
-            finish_run_log("control_exception", e.what(), false);
-            rclcpp::shutdown();
-            return;
+            RCLCPP_ERROR(this->get_logger(), "Exception in control thread: %s", e.what());
+            handle_runtime_fault("control_exception", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Unknown exception in control thread");
+            handle_runtime_fault("control_exception", "unknown exception");
         }
         auto loop_end = std::chrono::steady_clock::now();
         auto elapsed_time = std::chrono::duration_cast<std::chrono::microseconds>(loop_end - loop_start);
@@ -704,10 +779,12 @@ void InferenceNode::inference() {
             }
             record_policy_sample(clamped_joint_count);
         } catch (const std::exception& e) {
-            RCLCPP_FATAL(this->get_logger(), "Exception in inference thread: %s", e.what());
-            finish_run_log("inference_exception", e.what(), false);
-            rclcpp::shutdown();
-            return;
+            RCLCPP_ERROR(this->get_logger(), "Exception in inference thread: %s", e.what());
+            handle_runtime_fault("inference_exception", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Unknown exception in inference thread");
+            handle_runtime_fault("inference_exception", "unknown exception");
         }
 
         auto loop_end = std::chrono::steady_clock::now();

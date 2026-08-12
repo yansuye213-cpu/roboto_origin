@@ -157,9 +157,11 @@ void InferenceNode::get_gravity_b_obs(std::vector<float>& segment) {
     Eigen::Quaternionf q_w2b = q_b2w.inverse();
     Eigen::Vector3f gravity_b = q_w2b * gravity_w;
     if (gravity_b.z() > gravity_z_upper_){
-        RCLCPP_FATAL(this->get_logger(), "Robot fell down! Shutting down...");
-        rclcpp::shutdown();
-        throw std::runtime_error("Robot fell down");
+        RCLCPP_ERROR(this->get_logger(),
+                     "Robot fell down; disabling motors and stopping inference");
+        throw std::runtime_error(
+            "Robot fell down: gravity_z=" + std::to_string(gravity_b.z()) +
+            ", threshold=" + std::to_string(gravity_z_upper_));
     }
     segment[0] = gravity_b.x() * obs_scales_gravity_b_;
     segment[1] = gravity_b.y() * obs_scales_gravity_b_;
@@ -206,14 +208,19 @@ void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
         }
         if (measured < lower - joint_limit_check_tolerance_ ||
             measured > upper + joint_limit_check_tolerance_) {
-            RCLCPP_FATAL(
+            RCLCPP_ERROR(
                 this->get_logger(),
                 "Joint %zu (%s, %s) feedback %.6f outside [%.6f, %.6f] "
-                "with %.6f rad tolerance; shutting down",
+                "with %.6f rad tolerance; disabling motors and stopping inference",
                 i + 1, joint_name.c_str(), motor_label.c_str(), measured, lower, upper,
                 joint_limit_check_tolerance_);
-            rclcpp::shutdown();
-            throw std::runtime_error("Joint out of limit");
+            std::ostringstream detail;
+            detail << "Joint " << i + 1 << " (" << joint_name << ", "
+                   << motor_label << ") feedback " << measured
+                   << " outside [" << lower << ", " << upper
+                   << "] with " << joint_limit_check_tolerance_
+                   << " rad tolerance";
+            throw std::runtime_error(detail.str());
         }
         if (measured < lower || measured > upper) {
             RCLCPP_WARN_THROTTLE(

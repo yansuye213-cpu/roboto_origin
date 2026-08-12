@@ -634,6 +634,11 @@ X 失能电机
 遗留的 `.active.csv` 改名为 `.unclean.csv`。相对路径 `runtime_logs/` 固定解析为
 `modules/roboparty_deploy/runtime_logs/`，且不会被 Git 跟踪。
 
+策略运行期间发生关节超限、跌倒、电机离线或控制/推理异常时，节点会先停止
+发送控制目标并失能电机，将当前日志结束为 `.error.csv`，但不会退出
+`inference_node`。排除故障并扶稳机器人后，可重新按 `X`、`A`、`RSB`、`B`
+开始下一次测试；每次重新按 `B` 都会创建新的 CSV。
+
 CSV 每个 policy 周期记录一行。`q_actual_rad`、`dq_actual_rad_s` 和
 `q_target_rad` 分别是实际角度、实际角速度和最终发送目标；
 `tau_feedback_peak_nm` 与 `tau_demand_peak_nm` 是该 policy 周期内以 250 Hz
