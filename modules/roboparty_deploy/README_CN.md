@@ -634,8 +634,10 @@ X 失能电机
 遗留的 `.active.csv` 改名为 `.unclean.csv`。相对路径 `runtime_logs/` 固定解析为
 `modules/roboparty_deploy/runtime_logs/`，且不会被 Git 跟踪。
 
-策略运行期间发生关节超限、跌倒、电机离线或控制/推理异常时，节点会先停止
-发送控制目标并失能电机，将当前日志结束为 `.error.csv`，但不会退出
+关节反馈超出 `joint_limits` 时只会在终端报警，并在 CSV 中写入
+`joint_limit_exceeded`；回到范围内会写入 `joint_limit_restored`。反馈越界不会停止
+推理或失能电机，策略目标仍会被夹紧在配置限位内。跌倒、电机离线或控制/推理
+异常仍会停止发送控制目标并失能电机，将当前日志结束为 `.error.csv`，但不会退出
 `inference_node`。排除故障并扶稳机器人后，可重新按 `X`、`A`、`RSB`、`B`
 开始下一次测试；每次重新按 `B` 都会创建新的 CSV。
 

@@ -191,43 +191,50 @@ void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
                 ? stand_stabilizer_config_.whole_body_joint_order[i]
                 : "joint_" + std::to_string(i + 1);
         const std::string motor_label = robot_->joint_motor_label(i);
-        const bool check_ignored =
-            std::find(joint_limit_check_ignored_joints_.begin(),
-                      joint_limit_check_ignored_joints_.end(),
-                      joint_name) != joint_limit_check_ignored_joints_.end();
-        if (check_ignored) {
-            if (measured < lower || measured > upper) {
-                RCLCPP_WARN_THROTTLE(
-                    this->get_logger(), *this->get_clock(), 1000,
-                    "Joint %zu (%s, %s) feedback %.6f outside [%.6f, %.6f]; "
-                    "feedback limit shutdown is disabled for this joint",
-                    i + 1, joint_name.c_str(), motor_label.c_str(), measured,
-                    lower, upper);
-            }
-            continue;
-        }
-        if (measured < lower - joint_limit_check_tolerance_ ||
-            measured > upper + joint_limit_check_tolerance_) {
-            RCLCPP_ERROR(
-                this->get_logger(),
-                "Joint %zu (%s, %s) feedback %.6f outside [%.6f, %.6f] "
-                "with %.6f rad tolerance; disabling motors and stopping inference",
-                i + 1, joint_name.c_str(), motor_label.c_str(), measured, lower, upper,
-                joint_limit_check_tolerance_);
-            std::ostringstream detail;
-            detail << "Joint " << i + 1 << " (" << joint_name << ", "
-                   << motor_label << ") feedback " << measured
-                   << " outside [" << lower << ", " << upper
-                   << "] with " << joint_limit_check_tolerance_
-                   << " rad tolerance";
-            throw std::runtime_error(detail.str());
-        }
-        if (measured < lower || measured > upper) {
+        const bool outside = measured < lower || measured > upper;
+        if (outside) {
+            const double overshoot = measured < lower
+                ? lower - measured
+                : measured - upper;
             RCLCPP_WARN_THROTTLE(
                 this->get_logger(), *this->get_clock(), 1000,
-                "Joint %zu (%s, %s) feedback %.6f slightly outside [%.6f, %.6f] "
-                "but within %.6f rad measurement tolerance",
-                i + 1, joint_name.c_str(), motor_label.c_str(), measured, lower, upper,
+                "Joint %zu (%s, %s) feedback %.6f outside [%.6f, %.6f] "
+                "by %.6f rad; warning only, inference continues",
+                i + 1, joint_name.c_str(), motor_label.c_str(), measured,
+                lower, upper, overshoot);
+
+            if (!joint_limit_violation_active_[i]) {
+                joint_limit_violation_active_[i] = true;
+                if (run_logger_ && run_logger_->active()) {
+                    std::ostringstream detail;
+                    detail << "Joint " << i + 1 << " (" << joint_name << ", "
+                           << motor_label << ") feedback " << measured
+                           << " outside [" << lower << ", " << upper
+                           << "] by " << overshoot << " rad";
+                    run_logger_->record_event("joint_limit_exceeded", detail.str());
+                }
+            }
+        } else if (joint_limit_violation_active_[i] &&
+                   measured >= lower + joint_limit_check_tolerance_ &&
+                   measured <= upper - joint_limit_check_tolerance_) {
+            joint_limit_violation_active_[i] = false;
+            if (run_logger_ && run_logger_->active()) {
+                std::ostringstream detail;
+                detail << "Joint " << i + 1 << " (" << joint_name << ", "
+                       << motor_label << ") feedback returned to " << measured
+                       << " within [" << lower << ", " << upper << "]";
+                run_logger_->record_event("joint_limit_restored", detail.str());
+            }
+        }
+
+        if (outside &&
+            (measured < lower - joint_limit_check_tolerance_ ||
+             measured > upper + joint_limit_check_tolerance_)) {
+            RCLCPP_ERROR_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Joint %zu (%s, %s) feedback exceeds the configured limit "
+                "tolerance %.6f rad; monitoring only",
+                i + 1, joint_name.c_str(), motor_label.c_str(),
                 joint_limit_check_tolerance_);
         }
     }

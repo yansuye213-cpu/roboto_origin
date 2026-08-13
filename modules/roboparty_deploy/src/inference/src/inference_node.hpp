@@ -259,7 +259,7 @@ class InferenceNode : public rclcpp::Node {
     std::vector<double> clip_cmd_, joint_default_angle_, policy_joint_signs_, reset_joint_angle_, stand_joint_angle_, joint_limits_;
     std::vector<double> joy_linear_axis_thresholds_, joy_linear_speed_levels_;
     std::vector<long int> usd2urdf_;
-    std::vector<std::string> joint_limit_check_ignored_joints_;
+    std::vector<bool> joint_limit_violation_active_;
     float gravity_z_upper_;
     float stand_transition_time_;
     float stand_transition_elapsed_ = 0.0f;

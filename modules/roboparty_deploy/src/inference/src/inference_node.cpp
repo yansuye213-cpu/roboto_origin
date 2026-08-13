@@ -227,6 +227,7 @@ void InferenceNode::initialize_runtime_state() {
     joint_pos_buffer_.assign(joint_num_, 0.0f);
     joint_vel_buffer_.assign(joint_num_, 0.0f);
     joint_torques_buffer_.assign(joint_num_, 0.0f);
+    joint_limit_violation_active_.assign(joint_num_, false);
     quat_buffer_.assign(4, 0.0f);
     ang_vel_buffer_.assign(3, 0.0f);
     if (has_obs_source("perception")) {
@@ -443,6 +444,8 @@ void InferenceNode::start_policy_transition_locked(const std::vector<float>& cur
         std::unique_lock<std::mutex> lock(cmd_mutex_);
         std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
     }
+    std::fill(joint_limit_violation_active_.begin(),
+              joint_limit_violation_active_.end(), false);
     start_run_log();
     is_running_.store(true);
 }
