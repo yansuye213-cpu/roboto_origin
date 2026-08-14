@@ -112,8 +112,8 @@ LOCOMOTION_DEFAULT_POS_MJCF[LOCOMOTION_POLICY_TO_MJCF] = (
 )
 LOCOMOTION_KPS_MJCF = np.array(
     [
-        100.0, 100.0, 100.0, 150.0, 90.0, 90.0,
-        100.0, 100.0, 100.0, 150.0, 90.0, 90.0,
+        100.0, 100.0, 100.0, 150.0, 60.0, 60.0,
+        100.0, 100.0, 100.0, 150.0, 60.0, 60.0,
         30.0,
         40.0, 40.0, 40.0, 30.0,
         40.0, 40.0, 40.0, 30.0,
@@ -122,8 +122,8 @@ LOCOMOTION_KPS_MJCF = np.array(
 )
 LOCOMOTION_KDS_MJCF = np.array(
     [
-        3.3, 3.3, 3.3, 4.0, 3.3, 3.3,
-        3.3, 3.3, 3.3, 4.0, 3.3, 3.3,
+        3.3, 3.3, 3.3, 4.0, 2.5, 2.5,
+        3.3, 3.3, 3.3, 4.0, 2.5, 2.5,
         1.5,
         2.0, 2.0, 2.0, 1.5,
         2.0, 2.0, 2.0, 1.5,
@@ -133,7 +133,7 @@ LOCOMOTION_KDS_MJCF = np.array(
 
 
 class cmd:
-    vx = 0.5
+    vx = 0.7
     vy = 0.0
     dyaw = 0.0
 
@@ -489,7 +489,7 @@ if __name__ == '__main__':
             kds = LOCOMOTION_KDS_MJCF
             default_pos = LOCOMOTION_DEFAULT_POS_MJCF
             tau_limit = RPO_TAU_LIMIT
-            frame_stack = 1
+            frame_stack = 10
             num_actions = len(LOCOMOTION_POLICY_JOINT_NAMES)
             num_single_obs = 9 + 3 * num_actions
             num_observations = num_single_obs * frame_stack

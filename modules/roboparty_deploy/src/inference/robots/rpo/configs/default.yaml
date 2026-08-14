@@ -1,9 +1,9 @@
 inference_node:
     ros__parameters:
-        model_names: ["policy_4999.onnx"]
+        model_names: ["policy.onnx"]
         obs_layouts:
           - "ang_vel:3, gravity_b:3, cmd_vel:3, dof_pos:21, dof_vel:21, last_action:21"
-        frame_stacks: [1]
+        frame_stacks: [10]
         obs_stack_orders: ["frame_major"]
         act_alpha: 1.0
         joint_num: 21
