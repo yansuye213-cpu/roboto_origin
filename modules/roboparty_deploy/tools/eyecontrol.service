@@ -1,0 +1,22 @@
+[Unit]
+Description=Roboparty eye display
+Wants=display-manager.service
+After=display-manager.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=limrobot
+Group=limrobot
+WorkingDirectory=/home/limrobot/Project/roboparty_xlong/roboto_origin/modules/roboparty_display/eyecontrol
+
+Environment=HOME=/home/limrobot
+Environment=ROBOPARTY_AUTOSTART_CONFIG=/home/limrobot/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy/tools/roboparty-autostart.conf
+
+ExecStart=/home/limrobot/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy/tools/start_eye.sh
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=graphical.target
