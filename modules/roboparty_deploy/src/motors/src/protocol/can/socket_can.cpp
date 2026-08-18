@@ -9,6 +9,7 @@
  */
 
 #include "socket_can.hpp"
+#include <chrono>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 // MotorsCAN static members
@@ -34,6 +35,67 @@ MotorsSocketCAN::MotorsSocketCAN(const std::string& interface)
 }
 
 MotorsSocketCAN::~MotorsSocketCAN() { this->close(); }
+
+int64_t MotorsSocketCAN::monotonic_time_ns() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void MotorsSocketCAN::record_tx_timing(const CanTxQueueItem& item, int64_t write_ns,
+                                       bool success, int write_errno) {
+    std::lock_guard<std::mutex> lock(tx_timing_mutex_);
+    if (tx_timing_events_.size() >= MAX_TIMING_EVENTS) {
+        timing_event_drops_++;
+        return;
+    }
+    tx_timing_events_.push_back({
+        item.sequence, item.frame.can_id & CAN_SFF_MASK, item.enqueue_ns, write_ns,
+        item.queue_depth, success, write_errno,
+    });
+}
+
+void MotorsSocketCAN::record_rx_timing(const can_frame& frame, int64_t rx_ns) {
+    std::lock_guard<std::mutex> lock(rx_timing_mutex_);
+    if (rx_timing_events_.size() >= MAX_TIMING_EVENTS) {
+        timing_event_drops_++;
+        return;
+    }
+    rx_timing_events_.push_back({frame.can_id & CAN_SFF_MASK, rx_ns});
+}
+
+void MotorsSocketCAN::set_timing_enabled(bool enabled) {
+    timing_enabled_ = false;
+    if (!enabled) return;
+    {
+        std::lock_guard<std::mutex> lock(tx_timing_mutex_);
+        tx_timing_events_.clear();
+        tx_timing_events_.reserve(MAX_TIMING_EVENTS);
+    }
+    {
+        std::lock_guard<std::mutex> lock(rx_timing_mutex_);
+        rx_timing_events_.clear();
+        rx_timing_events_.reserve(MAX_TIMING_EVENTS);
+    }
+    tx_sequence_ = 0;
+    tx_queue_drops_ = 0;
+    timing_event_drops_ = 0;
+    timing_enabled_ = true;
+}
+
+CanTimingSnapshot MotorsSocketCAN::drain_timing() {
+    CanTimingSnapshot snapshot;
+    {
+        std::lock_guard<std::mutex> lock(tx_timing_mutex_);
+        snapshot.tx_events.swap(tx_timing_events_);
+    }
+    {
+        std::lock_guard<std::mutex> lock(rx_timing_mutex_);
+        snapshot.rx_events.swap(rx_timing_events_);
+    }
+    snapshot.tx_queue_drops = tx_queue_drops_.load();
+    snapshot.timing_event_drops = timing_event_drops_.load();
+    return snapshot;
+}
 
 void MotorsSocketCAN::open(const std::string& interface) {
     sockfd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
@@ -131,6 +193,9 @@ void MotorsSocketCAN::open(const std::string& interface) {
                     if (len == 0){
                         break;
                     }
+                    if (timing_enabled_) {
+                        record_rx_timing(rx_frame, monotonic_time_ns());
+                    }
                     CanCbkFunc callback_to_run;
                     {
                         std::lock_guard<std::mutex> lock(can_callback_mutex_);
@@ -172,25 +237,40 @@ void MotorsSocketCAN::open(const std::string& interface) {
             logger_->error("Failed to bind CAN TX thread to Core {}", cpu_id);
         }
 
-        can_frame tx_frame;
-        int count = 0;
+        CanTxQueueItem tx_item;
         while (receiving_) {
             {
                 std::unique_lock<std::mutex> lock(tx_mutex_);
                 tx_cv_.wait(lock, [this]() { return !tx_queue_.empty() || !receiving_; });
                 if (!receiving_) break;
-                if (!tx_queue_.pop(tx_frame)) continue;
+                if (!tx_queue_.pop(tx_item)) continue;
+                if (tx_item.sequence != 0) tx_queue_depth_.fetch_sub(1);
             }
-            while (::write(sockfd_, &tx_frame, sizeof(can_frame)) < 0 && count < MAX_RETRY_COUNT) {
-                count += 1;
-                std::this_thread::sleep_for(std::chrono::microseconds(1000));  // Avoid busy-waiting
+            int retry_count = 0;
+            int write_errno = 0;
+            bool write_success = false;
+            int64_t write_ns = 0;
+            while (retry_count < MAX_RETRY_COUNT) {
+                const ssize_t written = ::write(sockfd_, &tx_item.frame, sizeof(can_frame));
+                if (written == static_cast<ssize_t>(sizeof(can_frame))) {
+                    write_ns = monotonic_time_ns();
+                    write_success = true;
+                    break;
+                }
+                write_errno = errno;
+                retry_count += 1;
+                if (retry_count < MAX_RETRY_COUNT) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(1000));
+                }
             }
-            if (count >= MAX_RETRY_COUNT) {
+            if (tx_item.sequence != 0) {
+                record_tx_timing(tx_item, write_ns, write_success, write_errno);
+            }
+            if (!write_success) {
                 logger_->error("Failed to transmit CAN frame");
             } else if (send_sleep_us_ > 0) {
                 std::this_thread::sleep_for(std::chrono::microseconds(send_sleep_us_));
             }
-            count = 0;
         }
     });
 }
@@ -216,7 +296,22 @@ void MotorsSocketCAN::transmit(const can_frame &frame) {
         logger_->error("Unable to transmit: Socket not open");
         return;
     }
-    tx_queue_.bounded_push(frame);
+    CanTxQueueItem item;
+    item.frame = frame;
+    if (timing_enabled_) {
+        item.sequence = tx_sequence_.fetch_add(1) + 1;
+        item.enqueue_ns = monotonic_time_ns();
+        item.queue_depth = tx_queue_depth_.fetch_add(1) + 1;
+    }
+    if (!tx_queue_.bounded_push(item)) {
+        if (item.sequence != 0) {
+            tx_queue_depth_.fetch_sub(1);
+            tx_queue_drops_++;
+            record_tx_timing(item, 0, false, ENOBUFS);
+        }
+        logger_->error("CAN TX queue full; frame dropped on {}", interface_);
+        return;
+    }
     tx_cv_.notify_one();
 }
 

@@ -8,6 +8,7 @@
 #include "drivers/evo/evo_motor_driver.hpp"
 #include "drivers/lro/lro_motor_driver.hpp"
 #include "drivers/xyn/xyn_motor_driver.hpp"
+#include "protocol/can/socket_can.hpp"
 
 namespace py = pybind11;
 
@@ -65,5 +66,38 @@ PYBIND11_MODULE(motors_py, m) {
         .def("get_motor_temperature", &MotorDriver::get_motor_temperature)
         .def("clear_motor_error", &MotorDriver::clear_motor_error)
         .def("get_can_name", &MotorDriver::get_can_name);
+
+    m.def("set_can_timing_enabled", [](const std::string& interface, bool enabled) {
+        MotorsSocketCAN::get(interface)->set_timing_enabled(enabled);
+    }, py::arg("interface"), py::arg("enabled"));
+
+    m.def("drain_can_timing", [](const std::string& interface) {
+        const CanTimingSnapshot snapshot = MotorsSocketCAN::get(interface)->drain_timing();
+        py::list tx_events;
+        for (const auto& event : snapshot.tx_events) {
+            py::dict item;
+            item["sequence"] = event.sequence;
+            item["can_id"] = event.can_id;
+            item["enqueue_ns"] = event.enqueue_ns;
+            item["write_ns"] = event.write_ns;
+            item["queue_depth"] = event.queue_depth;
+            item["write_success"] = event.write_success;
+            item["write_errno"] = event.write_errno;
+            tx_events.append(item);
+        }
+        py::list rx_events;
+        for (const auto& event : snapshot.rx_events) {
+            py::dict item;
+            item["can_id"] = event.can_id;
+            item["rx_ns"] = event.rx_ns;
+            rx_events.append(item);
+        }
+        py::dict result;
+        result["tx_events"] = tx_events;
+        result["rx_events"] = rx_events;
+        result["tx_queue_drops"] = snapshot.tx_queue_drops;
+        result["timing_event_drops"] = snapshot.timing_event_drops;
+        return result;
+    }, py::arg("interface"));
 
 }
