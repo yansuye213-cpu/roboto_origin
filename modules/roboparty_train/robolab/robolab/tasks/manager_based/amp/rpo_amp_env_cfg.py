@@ -44,7 +44,7 @@ import isaaclab.terrains as terrain_gen
 # Pre-defined configs
 ##
 
-from robolab.assets.robots.roboparty import RPO_CFG
+from robolab.assets.robots.roboparty import RPO_ACTION_JOINT_NAMES, RPO_CFG, RPO_NUM_ACTIONS
 from robolab import ROBOLAB_ROOT_DIR
 
 # NOTE: KEY_BODY_NAMES must match lab_key_body_names in robolab/scripts/tools/retarget/config/rpo.yaml
@@ -53,11 +53,21 @@ KEY_BODY_NAMES = [
     "right_ankle_roll_link",
     "left_knee_link",
     "right_knee_link",
-    "left_elbow_yaw_link",
-    "right_elbow_yaw_link"
+    "left_elbow_pitch_link",
+    "right_elbow_pitch_link"
 ]
 ANIMATION_TERM_NAME = "animation"
 AMP_NUM_STEPS = 3
+
+
+def _ordered_joint_asset_cfg() -> SceneEntityCfg:
+    return SceneEntityCfg("robot", joint_names=RPO_ACTION_JOINT_NAMES, preserve_order=True)
+
+
+def _apply_ordered_joint_observations(observations):
+    for group in (observations.policy, observations.critic, observations.disc):
+        group.joint_pos.params = {"asset_cfg": _ordered_joint_asset_cfg()}
+        group.joint_vel.params = {"asset_cfg": _ordered_joint_asset_cfg()}
 
 @configclass
 class RPOAmpRewards():
@@ -95,7 +105,7 @@ class RPOAmpRewards():
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
-                joint_names=[".*_arm_pitch_joint"],
+                joint_names=[".*_shoulder_pitch_joint"],
             )
         },
     )
@@ -162,6 +172,8 @@ class RPOAmpEnvCfg(AmpEnvCfg):
         # Scene
         # ------------------------------------------------------
         self.scene.robot = RPO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        self.actions.joint_pos.joint_names = RPO_ACTION_JOINT_NAMES
+        _apply_ordered_joint_observations(self.observations)
         
         # plane terrain
         self.scene.terrain.terrain_type = "plane"
@@ -173,6 +185,7 @@ class RPOAmpEnvCfg(AmpEnvCfg):
         self.motion_data.motion_dataset.motion_data_dir = os.path.join(
             ROBOLAB_ROOT_DIR, "data", "motions", "rpo_lab"
         )
+        self.motion_data.motion_dataset.expected_num_dofs = RPO_NUM_ACTIONS
         self.motion_data.motion_dataset.motion_data_weights={
             
             "127_06": 16, 
@@ -193,6 +206,7 @@ class RPOAmpEnvCfg(AmpEnvCfg):
         # animation
         # ------------------------------------------------------
         self.animation.animation.num_steps_to_use = AMP_NUM_STEPS
+        self.animation.animation.joint_names = RPO_ACTION_JOINT_NAMES
 
         # ------------------------------------------------------
         # Observations
@@ -262,8 +276,10 @@ class RPOAmpEnvCfg(AmpEnvCfg):
         
         
         self.terminations.base_contact.params["sensor_cfg"].body_names = [
-            ".*_thigh_.*_link", "base_link", ".*_arm_.*_link", ".*_elbow_.*_link",
+            ".*_leg_.*_link", "base_link", "head_yaw_link", ".*_shoulder_.*_link", ".*_elbow_.*_link",
         ]
+        self.events.randomize_rigid_body_com.params["asset_cfg"].body_names = ["head_yaw_link", "base_link"]
+        self.events.base_external_force_torque.params["asset_cfg"].body_names = "base_link"
         if self.__class__.__name__ == "RPOAmpEnvCfg":
             self.disable_zero_weight_rewards()
             

@@ -86,6 +86,7 @@ class RobotCfg:
     critic_obs_history_length: int = 10
     action_history_length: int = 3
     action_scale: float = 0.25
+    expected_joint_names: list = None
     terminate_contacts_body_names: list = None
     terminate_base_height: float = None
     terminate_base_orientation: float = None

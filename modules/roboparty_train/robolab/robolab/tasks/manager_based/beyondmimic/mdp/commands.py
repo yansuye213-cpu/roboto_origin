@@ -60,7 +60,16 @@ if TYPE_CHECKING:
 
 
 class MotionLoader:
-    def __init__(self, motion_file: str, body_indexes: Sequence[int], device: str = "cpu"):
+    def __init__(
+        self,
+        motion_file: str,
+        body_indexes: Sequence[int],
+        expected_num_joints: int,
+        expected_num_bodies: int | None = None,
+        expected_joint_names: Sequence[str] | None = None,
+        expected_body_names: Sequence[str] | None = None,
+        device: str = "cpu",
+    ):
         assert os.path.isfile(motion_file), f"Invalid file path: {motion_file}"
         data = np.load(motion_file)
         self.fps = data["fps"]
@@ -72,6 +81,45 @@ class MotionLoader:
         self._body_ang_vel_w = torch.tensor(data["body_ang_vel_w"], dtype=torch.float32, device=device)
         self._body_indexes = body_indexes
         self.time_step_total = self.joint_pos.shape[0]
+        if self.joint_pos.shape[1] != expected_num_joints or self.joint_vel.shape[1] != expected_num_joints:
+            raise ValueError(
+                f"{motion_file} has joint_pos/joint_vel dims "
+                f"{self.joint_pos.shape[1]}/{self.joint_vel.shape[1]}, expected {expected_num_joints}."
+            )
+        if "joint_names" in data.files and expected_joint_names is not None:
+            motion_joint_names = [str(name) for name in data["joint_names"].tolist()]
+            if motion_joint_names != list(expected_joint_names):
+                raise ValueError(
+                    f"{motion_file} joint_names do not match the configured order.\n"
+                    f"Expected: {list(expected_joint_names)}\n"
+                    f"Actual:   {motion_joint_names}"
+                )
+        if expected_num_bodies is not None:
+            body_counts = {
+                "body_pos_w": self._body_pos_w.shape[1],
+                "body_quat_w": self._body_quat_w.shape[1],
+                "body_lin_vel_w": self._body_lin_vel_w.shape[1],
+                "body_ang_vel_w": self._body_ang_vel_w.shape[1],
+            }
+            if any(count != expected_num_bodies for count in body_counts.values()):
+                raise ValueError(
+                    f"{motion_file} has body counts {body_counts}, expected {expected_num_bodies}. "
+                    "Regenerate the motion with the current robot asset."
+                )
+        if "body_names" in data.files and expected_body_names is not None:
+            motion_body_names = [str(name) for name in data["body_names"].tolist()]
+            if motion_body_names != list(expected_body_names):
+                raise ValueError(
+                    f"{motion_file} body_names do not match the current robot body order.\n"
+                    f"Expected: {list(expected_body_names)}\n"
+                    f"Actual:   {motion_body_names}"
+                )
+        max_body_index = int(torch.max(body_indexes).item()) if len(body_indexes) > 0 else -1
+        if max_body_index >= self._body_pos_w.shape[1]:
+            raise ValueError(
+                f"{motion_file} has {self._body_pos_w.shape[1]} bodies, "
+                f"but the configured robot body indexes require index {max_body_index}."
+            )
 
     @property
     def body_pos_w(self) -> torch.Tensor:
@@ -102,8 +150,27 @@ class MotionCommand(CommandTerm):
         self.body_indexes = torch.tensor(
             self.robot.find_bodies(self.cfg.body_names, preserve_order=True)[0], dtype=torch.long, device=self.device
         )
+        self.joint_indexes = None
+        if self.cfg.joint_names is not None:
+            joint_indexes, joint_names = self.robot.find_joints(self.cfg.joint_names, preserve_order=True)
+            if list(joint_names) != self.cfg.joint_names:
+                raise RuntimeError(
+                    "Motion command joints do not match the configured order.\n"
+                    f"Expected: {self.cfg.joint_names}\n"
+                    f"Actual:   {joint_names}"
+                )
+            self.joint_indexes = list(joint_indexes)
 
-        self.motion = MotionLoader(self.cfg.motion_file, self.body_indexes, device=self.device)
+        expected_num_joints = len(self.joint_indexes) if self.joint_indexes is not None else self.robot.data.default_joint_pos.shape[1]
+        self.motion = MotionLoader(
+            self.cfg.motion_file,
+            self.body_indexes,
+            expected_num_joints=expected_num_joints,
+            expected_num_bodies=self.cfg.expected_num_bodies,
+            expected_joint_names=self.cfg.joint_names,
+            expected_body_names=self.robot.body_names,
+            device=self.device,
+        )
         self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.body_pos_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 3, device=self.device)
         self.body_quat_relative_w = torch.zeros(self.num_envs, len(cfg.body_names), 4, device=self.device)
@@ -179,11 +246,15 @@ class MotionCommand(CommandTerm):
 
     @property
     def robot_joint_pos(self) -> torch.Tensor:
-        return self.robot.data.joint_pos
+        if self.joint_indexes is None:
+            return self.robot.data.joint_pos
+        return self.robot.data.joint_pos[:, self.joint_indexes]
 
     @property
     def robot_joint_vel(self) -> torch.Tensor:
-        return self.robot.data.joint_vel
+        if self.joint_indexes is None:
+            return self.robot.data.joint_vel
+        return self.robot.data.joint_vel[:, self.joint_indexes]
 
     @property
     def robot_body_pos_w(self) -> torch.Tensor:
@@ -305,11 +376,19 @@ class MotionCommand(CommandTerm):
         joint_vel = self.joint_vel.clone()
 
         joint_pos += sample_uniform(*self.cfg.joint_position_range, joint_pos.shape, joint_pos.device)
-        soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits[env_ids]
+        if self.joint_indexes is None:
+            soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits[env_ids]
+        else:
+            soft_joint_pos_limits = self.robot.data.soft_joint_pos_limits[env_ids][:, self.joint_indexes]
         joint_pos[env_ids] = torch.clip(
             joint_pos[env_ids], soft_joint_pos_limits[:, :, 0], soft_joint_pos_limits[:, :, 1]
         )
-        self.robot.write_joint_state_to_sim(joint_pos[env_ids], joint_vel[env_ids], env_ids=env_ids)
+        if self.joint_indexes is None:
+            self.robot.write_joint_state_to_sim(joint_pos[env_ids], joint_vel[env_ids], env_ids=env_ids)
+        else:
+            self.robot.write_joint_state_to_sim(
+                joint_pos[env_ids], joint_vel[env_ids], joint_ids=self.joint_indexes, env_ids=env_ids
+            )
         self.robot.write_root_state_to_sim(
             torch.cat([root_pos[env_ids], root_ori[env_ids], root_lin_vel[env_ids], root_ang_vel[env_ids]], dim=-1),
             env_ids=env_ids,
@@ -406,6 +485,10 @@ class MotionCommandCfg(CommandTermCfg):
     motion_file: str = MISSING
     anchor_body_name: str = MISSING
     body_names: list[str] = MISSING
+    joint_names: list[str] | None = None
+    """Motion joint order. If set, joint_pos/joint_vel are interpreted in this order."""
+    expected_num_bodies: int | None = None
+    """If set, motion body arrays must match this full robot body count."""
 
     pose_range: dict[str, tuple[float, float]] = {}
     velocity_range: dict[str, tuple[float, float]] = {}

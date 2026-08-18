@@ -29,16 +29,33 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import mujoco, mujoco_viewer
+import mujoco
 from tqdm import tqdm
+try:
+    from .rpo_21_mujoco import assert_rpo_21_mujoco_model
+except ImportError:
+    from rpo_21_mujoco import assert_rpo_21_mujoco_model
 from robolab.assets import ISAAC_DATA_DIR
-from pynput import keyboard
 import os
 import csv
 import time
 
+try:
+    import mujoco_viewer
+except ImportError:
+    mujoco_viewer = None
+
+try:
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+
 class cmd:
     reset_requested = False
+
+    @classmethod
+    def reset(cls):
+        cls.reset_requested = False
 
 def on_press(key):
     try:
@@ -52,6 +69,9 @@ def on_release(key):
     pass
 
 def start_keyboard_listener():
+    if keyboard is None:
+        print("[WARN] pynput is not installed; keyboard controls are disabled.")
+        return None
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
     return listener
@@ -67,10 +87,17 @@ def load_qpos_from_csv(csv_file):
             qpos_list.append(qpos)
     return qpos_list
 
-def run_mujoco(cfg,loop=False,motion_file=None):
+def _require(module, package_name, purpose):
+    if module is None:
+        raise RuntimeError(f"{package_name} is required {purpose}.")
+    return module
+
+def run_mujoco(cfg,loop=False,motion_file=None,headless=False):
     print("=" * 60)
     keyboard_listener = start_keyboard_listener()
 
+    if motion_file is None:
+        raise ValueError("--motion_file is required for CSV playback.")
     qpos_list=load_qpos_from_csv(motion_file)
 
     num_frames = len(qpos_list)
@@ -81,9 +108,12 @@ def run_mujoco(cfg,loop=False,motion_file=None):
         return t if t < num_frames else num_frames - 1
 
     model = mujoco.MjModel.from_xml_path(cfg.sim_config.mujoco_model_path)
+    assert_rpo_21_mujoco_model(model, cfg.sim_config.mujoco_model_path)
+    if len(qpos_list[0]) != model.nq:
+        raise ValueError(f"{motion_file} qpos dim is {len(qpos_list[0])}, expected {model.nq} for 21-DoF RPO MuJoCo.")
     model.opt.timestep = cfg.sim_config.dt
     data = mujoco.MjData(model)
-    data.qpos=qpos_list[0]
+    data.qpos[:] = qpos_list[0]
     mujoco.mj_fwdPosition(model, data)
 
     initial_qpos = data.qpos.copy()
@@ -92,13 +122,15 @@ def run_mujoco(cfg,loop=False,motion_file=None):
     os.environ['__GLX_VENDOR_LIBRARY_NAME'] = 'nvidia'
     os.environ['MUJOCO_GL'] = 'glfw'
     
-    mode = 'window'
-    viewer = mujoco_viewer.MujocoViewer(model, data,width=1920, height=1080)
-    viewer.cam.distance = 4.0
-    viewer.cam.azimuth = 45.0
-    viewer.cam.elevation = -20.0
-    viewer.cam.lookat = [0, 0, 1]
-    viewer.render()
+    viewer = None
+    if not headless:
+        viewer_mod = _require(mujoco_viewer, "mujoco-python-viewer", "when running with the GUI viewer")
+        viewer = viewer_mod.MujocoViewer(model, data,width=1920, height=1080)
+        viewer.cam.distance = 4.0
+        viewer.cam.azimuth = 45.0
+        viewer.cam.elevation = -20.0
+        viewer.cam.lookat = [0, 0, 1]
+        viewer.render()
 
     count_lowlevel = 0
     start_time = time.time()
@@ -115,7 +147,8 @@ def run_mujoco(cfg,loop=False,motion_file=None):
         idx=frame_idx(count_lowlevel)
         data.qpos[:] = qpos_list[idx]
         mujoco.mj_fwdPosition(model, data)
-        viewer.render()
+        if viewer is not None:
+            viewer.render()
 
         elapsed_real_time = time.time() - start_time
         target_sim_time = (step + 1) * cfg.sim_config.dt
@@ -124,9 +157,10 @@ def run_mujoco(cfg,loop=False,motion_file=None):
 
         count_lowlevel += 1
 
-    else:
+    if viewer is not None:
         viewer.close()
-    keyboard_listener.stop()
+    if keyboard_listener is not None:
+        keyboard_listener.stop()
     print("Simulation finished.")
 
     
@@ -136,13 +170,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Deployment script.')
     parser.add_argument('--motion_file',type=str,help='path to motion file(csv)')
     parser.add_argument('--loop',action="store_true",help='loop the policy')
+    parser.add_argument('--headless', action='store_true',
+                      help='Run without GUI viewer')
     args = parser.parse_args()
 
     class Sim2simCfg():
 
         class sim_config:
-            mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo.xml'
+            mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_21.xml'
             sim_duration = 1000.0
             dt = 0.02  #50hz
             
-    run_mujoco(Sim2simCfg(),args.loop,args.motion_file)
+    run_mujoco(Sim2simCfg(),args.loop,args.motion_file,args.headless)

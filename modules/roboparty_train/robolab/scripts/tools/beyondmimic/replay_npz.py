@@ -64,7 +64,7 @@ simulation_app = app_launcher.app
 ##
 # Pre-defined configs
 ##
-from robolab.assets.robots import RPO_CFG
+from robolab.assets.robots import RPO_ACTION_JOINT_NAMES, RPO_CFG
 from robolab.tasks.manager_based.beyondmimic.mdp import MotionLoader
 
 import isaaclab.sim as sim_utils
@@ -96,13 +96,16 @@ class ReplayMotionsSceneCfg(InteractiveSceneCfg):
 def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     # Extract scene entities
     robot: Articulation = scene["robot"]
+    robot_joint_indexes = robot.find_joints(RPO_ACTION_JOINT_NAMES, preserve_order=True)[0]
+    robot_body_indexes = torch.arange(len(robot.data.body_names), dtype=torch.long, device=sim.device)
     # Define simulation stepping
     sim_dt = sim.get_physics_dt()
 
     motion = MotionLoader(
         args_cli.file,
-        torch.tensor([0], dtype=torch.long, device=sim.device),
-        sim.device,
+        robot_body_indexes,
+        expected_num_joints=len(RPO_ACTION_JOINT_NAMES),
+        device=sim.device,
     )
     time_steps = torch.zeros(scene.num_envs, dtype=torch.long, device=sim.device)
 
@@ -113,13 +116,17 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         time_steps[reset_ids] = 0
 
         root_states = robot.data.default_root_state.clone()
-        root_states[:, :3] = motion.body_pos_w[time_steps][:, 0] + scene.env_origins[:, None, :]
+        root_states[:, :3] = motion.body_pos_w[time_steps][:, 0] + scene.env_origins
         root_states[:, 3:7] = motion.body_quat_w[time_steps][:, 0]
         root_states[:, 7:10] = motion.body_lin_vel_w[time_steps][:, 0]
         root_states[:, 10:] = motion.body_ang_vel_w[time_steps][:, 0]
 
+        joint_pos = robot.data.default_joint_pos.clone()
+        joint_vel = robot.data.default_joint_vel.clone()
+        joint_pos[:, robot_joint_indexes] = motion.joint_pos[time_steps]
+        joint_vel[:, robot_joint_indexes] = motion.joint_vel[time_steps]
         robot.write_root_state_to_sim(root_states)
-        robot.write_joint_state_to_sim(motion.joint_pos[time_steps], motion.joint_vel[time_steps])
+        robot.write_joint_state_to_sim(joint_pos, joint_vel)
         scene.write_data_to_sim()
         sim.render()  # We don't want physic (sim.step())
         scene.update(sim_dt)

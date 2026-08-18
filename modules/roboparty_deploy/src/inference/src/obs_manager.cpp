@@ -157,9 +157,11 @@ void InferenceNode::get_gravity_b_obs(std::vector<float>& segment) {
     Eigen::Quaternionf q_w2b = q_b2w.inverse();
     Eigen::Vector3f gravity_b = q_w2b * gravity_w;
     if (gravity_b.z() > gravity_z_upper_){
-        RCLCPP_FATAL(this->get_logger(), "Robot fell down! Shutting down...");
-        rclcpp::shutdown();
-        throw std::runtime_error("Robot fell down");
+        RCLCPP_ERROR(this->get_logger(),
+                     "Robot fell down; disabling motors and stopping inference");
+        throw std::runtime_error(
+            "Robot fell down: gravity_z=" + std::to_string(gravity_b.z()) +
+            ", threshold=" + std::to_string(gravity_z_upper_));
     }
     segment[0] = gravity_b.x() * obs_scales_gravity_b_;
     segment[1] = gravity_b.y() * obs_scales_gravity_b_;
@@ -176,13 +178,64 @@ void InferenceNode::get_cmd_vel_obs(std::vector<float>& segment) {
 void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
     joint_pos_buffer_ = robot_->get_joint_q();
     for (int i = 0; i < joint_num_; i++) {
-        segment[i] = (joint_pos_buffer_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) * obs_scales_dof_pos_;
+        segment[i] = policy_joint_signs_[i] *
+            (joint_pos_buffer_[usd2urdf_[i]] - joint_default_angle_[usd2urdf_[i]]) *
+            obs_scales_dof_pos_;
     }
-    for(size_t i = 0; i < joint_limits_.size() / 2; i++){
-        if(joint_pos_buffer_[i] < joint_limits_[i * 2] || joint_pos_buffer_[i] > joint_limits_[i * 2 + 1]){
-            RCLCPP_FATAL(this->get_logger(), "Joint %zu out of limit! Shutting down...", i+1);
-            rclcpp::shutdown();
-            throw std::runtime_error("Joint out of limit");
+    for (size_t i = 0; i < joint_limits_.size() / 2; i++) {
+        const double lower = joint_limits_[i * 2];
+        const double upper = joint_limits_[i * 2 + 1];
+        const double measured = joint_pos_buffer_[i];
+        const std::string joint_name =
+            i < stand_stabilizer_config_.whole_body_joint_order.size()
+                ? stand_stabilizer_config_.whole_body_joint_order[i]
+                : "joint_" + std::to_string(i + 1);
+        const std::string motor_label = robot_->joint_motor_label(i);
+        const bool outside = measured < lower || measured > upper;
+        if (outside) {
+            const double overshoot = measured < lower
+                ? lower - measured
+                : measured - upper;
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Joint %zu (%s, %s) feedback %.6f outside [%.6f, %.6f] "
+                "by %.6f rad; warning only, inference continues",
+                i + 1, joint_name.c_str(), motor_label.c_str(), measured,
+                lower, upper, overshoot);
+
+            if (!joint_limit_violation_active_[i]) {
+                joint_limit_violation_active_[i] = true;
+                if (run_logger_ && run_logger_->active()) {
+                    std::ostringstream detail;
+                    detail << "Joint " << i + 1 << " (" << joint_name << ", "
+                           << motor_label << ") feedback " << measured
+                           << " outside [" << lower << ", " << upper
+                           << "] by " << overshoot << " rad";
+                    run_logger_->record_event("joint_limit_exceeded", detail.str());
+                }
+            }
+        } else if (joint_limit_violation_active_[i] &&
+                   measured >= lower + joint_limit_check_tolerance_ &&
+                   measured <= upper - joint_limit_check_tolerance_) {
+            joint_limit_violation_active_[i] = false;
+            if (run_logger_ && run_logger_->active()) {
+                std::ostringstream detail;
+                detail << "Joint " << i + 1 << " (" << joint_name << ", "
+                       << motor_label << ") feedback returned to " << measured
+                       << " within [" << lower << ", " << upper << "]";
+                run_logger_->record_event("joint_limit_restored", detail.str());
+            }
+        }
+
+        if (outside &&
+            (measured < lower - joint_limit_check_tolerance_ ||
+             measured > upper + joint_limit_check_tolerance_)) {
+            RCLCPP_ERROR_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Joint %zu (%s, %s) feedback exceeds the configured limit "
+                "tolerance %.6f rad; monitoring only",
+                i + 1, joint_name.c_str(), motor_label.c_str(),
+                joint_limit_check_tolerance_);
         }
     }
 }
@@ -190,7 +243,7 @@ void InferenceNode::get_dof_pos_obs(std::vector<float>& segment) {
 void InferenceNode::get_dof_vel_obs(std::vector<float>& segment) {
     joint_vel_buffer_ = robot_->get_joint_vel();
     for (int i = 0; i < joint_num_; i++) {
-        segment[i] = joint_vel_buffer_[usd2urdf_[i]] * obs_scales_dof_vel_;
+        segment[i] = policy_joint_signs_[i] * joint_vel_buffer_[usd2urdf_[i]] * obs_scales_dof_vel_;
     }
 }
 

@@ -29,6 +29,7 @@
 #include "utils/motion_loader.hpp"
 #include <std_srvs/srv/trigger.hpp>
 #include "robot_interface.hpp"
+#include "run_logger.hpp"
 #include "standing_stabilizer.hpp"
 
 enum class ObsStackOrder {
@@ -91,6 +92,8 @@ class InferenceNode : public rclcpp::Node {
         std::shared_ptr<MotionLoader> motion_loader;
         size_t motion_frame = 0;
         bool is_first_frame = true;
+        bool inference_enabled = true;
+        std::string disabled_reason;
     };
 
     InferenceNode() : Node("inference_node") {
@@ -126,15 +129,45 @@ class InferenceNode : public rclcpp::Node {
                     throw std::runtime_error("Motion joint count mismatch: " + policy.motion_path);
                 }
             }
-            setup_model(policy.ctx, policy.model_path,
-                        policy.obs_num * policy.frame_stack + policy.extra_obs_num);
+            policy.inference_enabled =
+                setup_model(policy.ctx, policy.model_path,
+                            policy.obs_num * policy.frame_stack +
+                                policy.extra_obs_num,
+                            policy.disabled_reason);
+            if (!policy.inference_enabled) {
+                RCLCPP_WARN(this->get_logger(),
+                            "Policy disabled: %s (%s). Stand mode remains available.",
+                            policy.name.c_str(),
+                            policy.disabled_reason.c_str());
+            }
         }
         initialize_runtime_state();
         reset_runtime_state();
 
+        if (run_log_enabled_) {
+            std::vector<std::string> joint_names =
+                stand_stabilizer_config_.whole_body_joint_order;
+            if (joint_names.size() != static_cast<size_t>(joint_num_)) {
+                joint_names.resize(joint_num_);
+                for (int i = 0; i < joint_num_; ++i) {
+                    joint_names[i] = "joint_" + std::to_string(i + 1);
+                }
+                RCLCPP_WARN(this->get_logger(),
+                            "Run logger is using generic joint names because "
+                            "stand_whole_body_joint_order does not contain %d joints",
+                            joint_num_);
+            }
+            run_logger_ = std::make_unique<RunLogger>(run_log_directory_,
+                                                       std::move(joint_names));
+            telemetry_snapshot_.resize(static_cast<size_t>(joint_num_));
+        }
+
         auto data_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
         joy_subscription_ = this->create_subscription<sensor_msgs::msg::Joy>(
             "/joy", data_qos, std::bind(&InferenceNode::subs_joy_callback, this, std::placeholders::_1));
+        joy_watchdog_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(50),
+            std::bind(&InferenceNode::check_joy_watchdog, this));
         cmd_subscription_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", data_qos, std::bind(&InferenceNode::subs_cmd_callback,this, std::placeholders::_1
         ));
@@ -181,6 +214,7 @@ class InferenceNode : public rclcpp::Node {
         if (control_thread_.joinable()) {
             control_thread_.join();
         }
+        finish_run_log("node_shutdown", "node exited while policy was active", false);
         reset_runtime_state();
         if(robot_){
             robot_.reset();
@@ -194,14 +228,17 @@ class InferenceNode : public rclcpp::Node {
     ControlMode control_mode_ = ControlMode::Policy;
     std::string robot_config_path_;
     std::string perception_obs_topic_;
+    std::string run_log_directory_;
+    bool run_log_enabled_ = false;
     size_t current_motion_policy_idx_ = 0;
     int active_policy_idx_ = 0;
-    int perception_obs_num_, joint_num_;
+    int perception_obs_num_, joint_num_, interrupt_action_size_;
     int decimation_;
     std::unique_ptr<Ort::Env> env_;
     int intra_threads_;
     Ort::AllocatorWithDefaultOptions allocator_;
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_subscription_;
+    rclcpp::TimerBase::SharedPtr joy_watchdog_timer_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_subscription_;
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr elevation_subscription_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_subscription_;
@@ -210,32 +247,51 @@ class InferenceNode : public rclcpp::Node {
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_publisher_;
     std::thread inference_thread_;
     std::thread control_thread_;
+    std::unique_ptr<RunLogger> run_logger_;
+    RobotInterface::TelemetrySnapshot telemetry_snapshot_;
+    std::atomic<bool> runtime_fault_handling_{false};
     float act_alpha_;
     float dt_;
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
         obs_scales_gravity_b_, clip_observations_;
-    float action_scale_, clip_actions_;
-    std::vector<double> clip_cmd_, joint_default_angle_, stand_joint_angle_, joint_limits_;
+    float action_scale_, clip_actions_, policy_joint_limit_margin_, joint_limit_check_tolerance_;
+    double joy_timeout_sec_, joy_linear_axis_deadzone_;
+    std::vector<double> clip_cmd_, joint_default_angle_, policy_joint_signs_, reset_joint_angle_, stand_joint_angle_, joint_limits_;
+    std::vector<double> joy_linear_axis_thresholds_, joy_linear_speed_levels_;
     std::vector<long int> usd2urdf_;
+    std::vector<bool> joint_limit_violation_active_;
     float gravity_z_upper_;
     float stand_transition_time_;
     float stand_transition_elapsed_ = 0.0f;
     bool stand_transition_active_ = false;
+    float policy_transition_time_;
+    float policy_transition_elapsed_ = 0.0f;
+    bool policy_transition_active_ = false;
+    bool policy_transition_target_ready_ = false;
     StandingStabilizer::Config stand_stabilizer_config_;
     std::unique_ptr<StandingStabilizer> stand_stabilizer_;
     std::vector<float> stand_start_action_;
+    std::vector<float> policy_start_action_;
+    std::vector<float> policy_transition_offset_;
+    std::vector<float> policy_filtered_action_;
     std::vector<float> stand_kp_, stand_kd_;
-    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0, last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0;
+    int last_button0_ = 0, last_button1_ = 0, last_button2_ = 0, last_button3_ = 0,
+        last_button4_ = 0, last_button5_ = 0, last_button_lsb_ = 0,
+        last_button_rsb_ = 0;
+    std::atomic<int64_t> last_joy_message_ns_{0};
+    std::atomic<bool> joy_watchdog_timed_out_{false};
     std::vector<PolicyRuntime> policies_;
     std::vector<int> motion_policy_indices_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_joints_service_, set_zeros_service_, clear_errors_service_, refresh_joints_service_, read_joints_service_, read_imu_service_, init_motors_service_, deinit_motors_service_, start_inference_service_, stop_inference_service_;
 
     std::mutex act_mutex_, perception_mutex_, interrupt_mutex_, cmd_mutex_, mode_mutex_, lb_switch_mutex_;
+    std::mutex motor_lifecycle_mutex_;
     std::vector<float> act_, last_act_, cmd_vel_, interrupt_action_, perception_obs_buffer_;
     std::vector<float> joint_pos_buffer_, joint_vel_buffer_, joint_torques_buffer_, quat_buffer_, ang_vel_buffer_;
     sensor_msgs::msg::JointState joint_state_msg_, action_msg_;
 
     void subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg);
+    void check_joy_watchdog();
     void subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::Twist> msg);
     void subs_elevation_callback(const std::shared_ptr<std_msgs::msg::Float32MultiArray> msg);
     void subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg);
@@ -244,11 +300,21 @@ class InferenceNode : public rclcpp::Node {
     void apply_action();
     void apply_stand_action();
     void start_stand_transition_locked();
+    void start_policy_transition_locked(const std::vector<float>& current_joint_q);
+    void enter_safe_stand_locked(const std::vector<float>& current_joint_q);
+    void sync_action_reference(const std::vector<float>& joint_q);
+    void start_run_log();
+    void finish_run_log(const std::string& reason, const std::string& detail,
+                        bool clean_exit);
+    void record_policy_sample(size_t clamped_joint_count);
+    void handle_runtime_fault(const std::string& source,
+                              const std::string& detail) noexcept;
     PolicyRuntime& active_policy();
     const PolicyRuntime& active_policy() const;
 
     void load_config();
-    void setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size);
+    bool setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path,
+                     int input_size, std::string& disabled_reason);
 
     // Policy/model runtime helpers.
     void initialize_runtime_state();

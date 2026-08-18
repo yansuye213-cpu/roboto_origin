@@ -86,6 +86,8 @@ class BaseEnv(DirectRLEnv):
 
         self.episode_length = np.ceil(self.max_episode_length_s / self.step_dt)
         self.num_actions = self.robot.data.default_joint_pos.shape[1]
+        self.action_joint_ids = None
+        self._configure_action_joints()
         self.clip_actions = self.cfg.normalization.clip_actions
         self.clip_obs = self.cfg.normalization.clip_observations
 
@@ -143,6 +145,25 @@ class BaseEnv(DirectRLEnv):
             max_len=self.cfg.robot.critic_obs_history_length, batch_size=self.num_envs, device=self.device
         )
 
+    def _configure_action_joints(self):
+        expected_joint_names = self.cfg.robot.expected_joint_names
+        if expected_joint_names is None:
+            return
+        action_joint_ids, action_joint_names = self.robot.find_joints(expected_joint_names, preserve_order=True)
+        if list(action_joint_names) != expected_joint_names:
+            raise RuntimeError(
+                "Robot joints do not match the 21-DoF policy/deploy order.\n"
+                f"Expected: {expected_joint_names}\n"
+                f"Actual:   {action_joint_names}"
+            )
+        self.action_joint_ids = list(action_joint_ids)
+        self.num_actions = len(self.action_joint_ids)
+
+    def _select_action_joints(self, data: torch.Tensor) -> torch.Tensor:
+        if self.action_joint_ids is None:
+            return data
+        return data[:, self.action_joint_ids]
+
     def compute_current_observations(self):
         robot = self.robot
         net_contact_forces = self.contact_sensor.data.net_forces_w_history
@@ -150,8 +171,8 @@ class BaseEnv(DirectRLEnv):
         ang_vel = robot.data.root_ang_vel_b
         projected_gravity = robot.data.projected_gravity_b
         command = self.command_generator.command
-        joint_pos = robot.data.joint_pos - robot.data.default_joint_pos
-        joint_vel = robot.data.joint_vel - robot.data.default_joint_vel
+        joint_pos = self._select_action_joints(robot.data.joint_pos - robot.data.default_joint_pos)
+        joint_vel = self._select_action_joints(robot.data.joint_vel - robot.data.default_joint_vel)
         action = self.action_buffer.buffer[:, -1, :]
         current_actor_obs = torch.cat(
             [
@@ -180,8 +201,8 @@ class BaseEnv(DirectRLEnv):
         )
         feet_height = torch.clamp(feet_height - 0.04, min=0.0, max=1.0)
         feet_height = torch.nan_to_num(feet_height, nan=1.0, posinf=1.0, neginf=0)
-        joint_torque = robot.data.applied_torque
-        joint_acc = robot.data.joint_acc
+        joint_torque = self._select_action_joints(robot.data.applied_torque)
+        joint_acc = self._select_action_joints(robot.data.joint_acc)
         current_critic_obs = torch.cat(
             [current_actor_obs, root_lin_vel * self.obs_scales.lin_vel, feet_contact.float(), feet_contact_force.flatten(1), feet_air_time.flatten(1), feet_height.flatten(1), joint_acc, joint_torque], dim=-1
         )
@@ -246,10 +267,14 @@ class BaseEnv(DirectRLEnv):
         self.action_buffer.append(actions)
         self.actions = actions.clone()
         self.actions = torch.clip(self.actions, -self.clip_actions, self.clip_actions).to(self.device)
-        self.actions = self.actions * self.action_scale + self.robot.data.default_joint_pos
+        default_joint_pos = self._select_action_joints(self.robot.data.default_joint_pos)
+        self.actions = self.actions * self.action_scale + default_joint_pos
 
     def _apply_action(self) -> None:
-        self.robot.set_joint_position_target(self.actions)
+        if self.action_joint_ids is None:
+            self.robot.set_joint_position_target(self.actions)
+        else:
+            self.robot.set_joint_position_target(self.actions, joint_ids=self.action_joint_ids)
 
     def _get_observations(self):
         current_actor_obs, current_critic_obs = self.compute_current_observations()

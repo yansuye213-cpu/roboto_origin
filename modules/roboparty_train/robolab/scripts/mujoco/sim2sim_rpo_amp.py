@@ -30,17 +30,58 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import mujoco, mujoco_viewer
+import mujoco
 from collections import deque
 from tqdm import tqdm
-from scipy.spatial.transform import Rotation as R
-import torch
-import cv2
-import matplotlib.pyplot as plt
-import glfw
-from pynput import keyboard
+try:
+    from .rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
+except ImportError:
+    from rpo_21_mujoco import (
+        RPO_ACTION_JOINT_NAMES,
+        RPO_ACTION_TO_MJCF,
+        RPO_DEFAULT_POS,
+        RPO_KDS,
+        RPO_KPS,
+        RPO_TAU_LIMIT,
+        assert_rpo_21_mujoco_model,
+        get_obs as get_rpo_obs,
+    )
 import time
 from robolab.assets import ISAAC_DATA_DIR
+
+try:
+    import mujoco_viewer
+except ImportError:
+    mujoco_viewer = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import glfw
+except ImportError:
+    glfw = None
+
+try:
+    from pynput import keyboard
+except ImportError:
+    keyboard = None
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 _OBS_HISTORY_KEYS = (
     "base_ang_vel",
@@ -78,10 +119,15 @@ class TermHistory:
         return np.concatenate(list(self._dq), axis=0)
 
 
-class CompactOverlayMujocoViewer(mujoco_viewer.MujocoViewer):
+_MujocoViewerBase = mujoco_viewer.MujocoViewer if mujoco_viewer is not None else object
+
+
+class CompactOverlayMujocoViewer(_MujocoViewerBase):
     """MujocoViewer with the default left-side overlay hidden."""
 
     def __init__(self, *args, **kwargs):
+        _require(mujoco_viewer, "mujoco-python-viewer", "when running with the GUI viewer")
+        _require(glfw, "glfw", "when running with the GUI viewer")
         super().__init__(*args, **kwargs)
         self.ctx = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_200.value)
         self._velocity_table = None
@@ -202,7 +248,7 @@ def open_interactive_viewer(
     data: mujoco.MjData,
     fallback_width: int = 1920,
     fallback_height: int = 1080,
-) -> mujoco_viewer.MujocoViewer:
+):
     viewer = CompactOverlayMujocoViewer(
         model, data, mode="window", width=int(fallback_width), height=int(fallback_height)
     )
@@ -305,6 +351,9 @@ def on_release(key):
     pass
 
 def start_keyboard_listener():
+    if keyboard is None:
+        print("[WARN] pynput is not installed; keyboard controls are disabled.")
+        return None
     """Start keyboard listener"""
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.start()
@@ -313,14 +362,7 @@ def start_keyboard_listener():
 def get_obs(data):
     '''Extracts an observation from the mujoco data structure
     '''
-    q = data.qpos.astype(np.double)
-    dq = data.qvel.astype(np.double)
-    quat = data.sensor('orientation').data[[1, 2, 3, 0]].astype(np.double)
-    r = R.from_quat(quat)
-    v = r.apply(data.qvel[:3], inverse=True).astype(np.double)  # In the base frame
-    omega = data.sensor('angular-velocity').data.astype(np.double)
-    gvec = r.apply(np.array([0., 0., -1.]), inverse=True).astype(np.double)
-    return (q, dq, quat, v, omega, gvec)
+    return get_rpo_obs(data)
 
 def viewer_velocity_overlay(viewer, cmd_vx, cmd_vy, cmd_wz, base_v, base_omega):
     """Show command and measured base-frame velocity in the active MuJoCo viewer."""
@@ -340,7 +382,12 @@ def pd_control(target_q, q, kp, target_dq, dq, kd):
     '''
     return (target_q - q) * kp + (target_dq - dq) * kd
 
-def run_mujoco(policy, cfg, headless=False):
+def _require(module, package_name, purpose):
+    if module is None:
+        raise RuntimeError(f"{package_name} is required {purpose}.")
+    return module
+
+def run_mujoco(policy, cfg, headless=False, no_video=False):
     """
     Run the Mujoco simulation using the provided policy and configuration.
 
@@ -365,6 +412,7 @@ def run_mujoco(policy, cfg, headless=False):
     keyboard_listener = start_keyboard_listener()
     
     model = mujoco.MjModel.from_xml_path(cfg.sim_config.mujoco_model_path)
+    assert_rpo_21_mujoco_model(model, cfg.sim_config.mujoco_model_path)
     model.opt.timestep = cfg.sim_config.dt
     data = mujoco.MjData(model)
     data.qpos[-cfg.robot_config.num_actions:] = cfg.robot_config.default_pos
@@ -377,16 +425,18 @@ def run_mujoco(policy, cfg, headless=False):
 
     
     if headless:
-        renderer = mujoco.Renderer(model, width=1920, height=1080)
+        if not no_video:
+            cv2_mod = _require(cv2, "opencv-python", "when running headless video output")
+            renderer = mujoco.Renderer(model, width=1920, height=1080)
         
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fourcc = cv2_mod.VideoWriter_fourcc(*'mp4v')
      
-        cam = mujoco.MjvCamera()
-        cam.distance = 4.0      
-        cam.azimuth = 45.0   
-        cam.elevation = -20.0   
-        cam.lookat = [0, 0, 1]  
-        out = cv2.VideoWriter('simulation.mp4', fourcc, 1.0/cfg.sim_config.dt/cfg.sim_config.decimation, (1920, 1080))
+            cam = mujoco.MjvCamera()
+            cam.distance = 4.0      
+            cam.azimuth = 45.0   
+            cam.elevation = -20.0   
+            cam.lookat = [0, 0, 1]  
+            out = cv2_mod.VideoWriter('simulation.mp4', fourcc, 1.0/cfg.sim_config.dt/cfg.sim_config.decimation, (1920, 1080))
     else:
         viewer = open_interactive_viewer(
             model,
@@ -480,7 +530,13 @@ def run_mujoco(policy, cfg, headless=False):
                 f"Expected policy input dim {cfg.robot_config.num_observations}, got {policy_input.shape[1]}."
             )
             with torch.inference_mode():
-                action[:] = policy(torch.tensor(policy_input))[0].detach().numpy()
+                policy_action = policy(torch.tensor(policy_input))[0].detach().numpy()
+            if policy_action.shape[0] != cfg.robot_config.num_actions:
+                raise ValueError(
+                    f"Policy output has {policy_action.shape[0]} actions, "
+                    f"expected {cfg.robot_config.num_actions}."
+                )
+            action[:] = policy_action
 
             target_q = action * cfg.robot_config.action_scale
             for i in range(len(cfg.robot_config.usd2urdf)):
@@ -507,7 +563,7 @@ def run_mujoco(policy, cfg, headless=False):
             actual_ang_vel_data.append(omega_low_freq) # Use the captured actual ang vel
             # ----------------------------------------------
 
-            if headless:
+            if headless and not no_video:
                 renderer.update_scene(data, camera=cam)
                 if cmd.camera_follow:
                     base_pos = data.qpos[0:3].tolist()
@@ -540,12 +596,23 @@ def run_mujoco(policy, cfg, headless=False):
         sleep_until(target_wall_time, cfg.sim_config.busy_wait_margin)
 
     if headless:
-        out.release()
+        if not no_video:
+            out.release()
     else:
         viewer.close()
     
     # Stop keyboard listener
-    keyboard_listener.stop()
+    if keyboard_listener is not None:
+        keyboard_listener.stop()
+
+    if not cfg.sim_config.save_plots:
+        print("Simulation finished.")
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError("matplotlib is required when --save-plots is set.") from exc
 
      # --- Plotting Section (Using only low-frequency data) ---
 
@@ -642,33 +709,41 @@ if __name__ == '__main__':
                         # type=str, 
                         default="policy.pt",
                         help='Run to load from.')
-    parser.add_argument('--terrain', action='store_true', default='plane', help='terrain or plane')
+    parser.add_argument('--terrain', action='store_true', help='terrain or plane')
     parser.add_argument('--headless', action='store_true', help='Run without GUI and save video')
+    parser.add_argument('--no-video', action='store_true',
+                      help='Run headless without creating a MuJoCo renderer/video')
+    parser.add_argument('--save-plots', action='store_true',
+                      help='Save joint/base velocity plots after simulation')
     args = parser.parse_args()
 
     class Sim2simCfg():
 
         class sim_config:
             if args.terrain:
-                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo.xml'
+                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_21_terrain.xml'
+            else:
+                mujoco_model_path = f'{ISAAC_DATA_DIR}/robots/roboparty/rpo/mjcf/rpo_21.xml'
             sim_duration = 1000000.0
             dt = 0.005
             decimation = 4
             render_fps = 120.0
             busy_wait_margin = 0.0005
+            save_plots = args.save_plots
 
         class robot_config:
-            kps = np.array([100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40, 150, 40, 40, 40, 30, 20, 40, 40, 40, 30, 20], dtype=np.double)
-            kds = np.array([3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 3.3, 3.3, 3.3, 5.0, 2.0, 2.0, 5.0, 2.0, 2.0, 2.0, 1.5, 1.0, 2.0, 2.0, 2.0, 1.5, 1.0], dtype=np.double)
-            default_pos = np.array([0, 0, -0.1, 0.3, -0.2, 0, 0, 0, -0.1, 0.3, -0.2, 0, 0, 0.18, 0.06, 0, 0.78, 0, 0.18, -0.06, 0, 0.78, 0], dtype=np.double)
-            tau_limit = 200. * np.ones(23, dtype=np.double)
+            kps = RPO_KPS
+            kds = RPO_KDS
+            default_pos = RPO_DEFAULT_POS
+            tau_limit = RPO_TAU_LIMIT
             frame_stack = 3 # obs history length
-            num_single_obs = 78
+            num_actions = len(RPO_ACTION_JOINT_NAMES)
+            num_single_obs = 9 + 3 * num_actions
             num_observations = num_single_obs * frame_stack
-            num_actions = 23
             action_scale = 0.25
-            # 'left_thigh_yaw_joint', 'right_thigh_yaw_joint', 'torso_joint', 'left_thigh_roll_joint', 'right_thigh_roll_joint', 'left_arm_pitch_joint', 'right_arm_pitch_joint', 'left_thigh_pitch_joint', 'right_thigh_pitch_joint', 'left_arm_roll_joint', 'right_arm_roll_joint', 'left_knee_joint', 'right_knee_joint', 'left_arm_yaw_joint', 'right_arm_yaw_joint', 'left_ankle_pitch_joint', 'right_ankle_pitch_joint', 'left_elbow_pitch_joint', 'right_elbow_pitch_joint', 'left_ankle_roll_joint', 'right_ankle_roll_joint', 'left_elbow_yaw_joint', 'right_elbow_yaw_joint'
-            usd2urdf = [0, 6, 12, 1, 7, 13, 18, 2, 8, 14, 19, 3, 9, 15, 20, 4, 10, 16, 21, 5, 11, 17, 22]
+            usd2urdf = RPO_ACTION_TO_MJCF
 
+    if torch is None:
+        raise RuntimeError("torch is required to load a TorchScript policy.")
     policy = torch.jit.load(args.load_model)
-    run_mujoco(policy, Sim2simCfg(), args.headless)
+    run_mujoco(policy, Sim2simCfg(), args.headless, args.no_video)

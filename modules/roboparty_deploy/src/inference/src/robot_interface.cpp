@@ -3,6 +3,43 @@
 
 #include "robot_interface.hpp"
 
+namespace {
+
+void require_config_size(const std::string& name, size_t actual, size_t expected) {
+    if (actual != expected) {
+        throw std::runtime_error(name + " must contain " + std::to_string(expected) +
+                                 " values, got " + std::to_string(actual));
+    }
+}
+
+size_t checked_motor_count(const std::vector<long int>& motor_num) {
+    size_t total = 0;
+    for (size_t i = 0; i < motor_num.size(); ++i) {
+        if (motor_num[i] < 0) {
+            throw std::runtime_error("motors.motor_num[" + std::to_string(i) + "] must not be negative");
+        }
+        total += static_cast<size_t>(motor_num[i]);
+    }
+    return total;
+}
+
+void require_index_permutation(const std::string& name, const std::vector<long int>& values, size_t count) {
+    require_config_size(name, values.size(), count);
+    std::vector<bool> seen(count, false);
+    for (size_t i = 0; i < values.size(); ++i) {
+        const long int value = values[i];
+        if (value < 0 || value >= static_cast<long int>(count)) {
+            throw std::runtime_error(name + "[" + std::to_string(i) + "] is out of range");
+        }
+        if (seen[static_cast<size_t>(value)]) {
+            throw std::runtime_error(name + " contains duplicate index " + std::to_string(value));
+        }
+        seen[static_cast<size_t>(value)] = true;
+    }
+}
+
+}
+
 RobotInterface::RobotInterface(const std::string& config_file) {
     YAML::Node config = YAML::LoadFile(config_file);
 
@@ -28,6 +65,14 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         if (motors_node["motor_id"]) motors_cfg_->motor_id_ = motors_node["motor_id"].as<std::vector<long int>>();
         if (motors_node["motor_model"]) motors_cfg_->motor_model_ = motors_node["motor_model"].as<std::vector<long int>>();
         if (motors_node["motor_num"]) motors_cfg_->motor_num_ = motors_node["motor_num"].as<std::vector<long int>>();
+        const size_t bus_count = motors_cfg_->motor_interface_.size();
+        require_config_size("motors.motor_interface_type", motors_cfg_->motor_interface_type_.size(), bus_count);
+        require_config_size("motors.motor_type", motors_cfg_->motor_type_.size(), bus_count);
+        require_config_size("motors.motor_num", motors_cfg_->motor_num_.size(), bus_count);
+        const size_t motor_count = checked_motor_count(motors_cfg_->motor_num_);
+        require_config_size("motors.motor_id", motors_cfg_->motor_id_.size(), motor_count);
+        require_config_size("motors.motor_model", motors_cfg_->motor_model_.size(), motor_count);
+        require_config_size("motors.motor_zero_offset", motors_cfg_->motor_zero_offset_.size(), motor_count);
         setup_motors();
     } else {
         throw std::runtime_error("Motors configuration not found in " + config_file);
@@ -41,6 +86,21 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         if (robot_node["close_chain_motor_idx"]) robot_cfg_->close_chain_motor_idx_ = robot_node["close_chain_motor_idx"].as<std::vector<long int>>();
         if (robot_node["motor_sign"]) robot_cfg_->motor_sign_ = robot_node["motor_sign"].as<std::vector<long int>>();
         if (robot_node["urdf2motor"]) robot_cfg_->urdf2motor_ = robot_node["urdf2motor"].as<std::vector<long int>>();
+        const size_t joint_count = motors_cfg_->motor_id_.size();
+        require_config_size("robot.kp", robot_cfg_->kp_.size(), joint_count);
+        require_config_size("robot.kd", robot_cfg_->kd_.size(), joint_count);
+        require_config_size("robot.motor_sign", robot_cfg_->motor_sign_.size(), joint_count);
+        require_index_permutation("robot.urdf2motor", robot_cfg_->urdf2motor_, joint_count);
+        if (!robot_cfg_->close_chain_motor_idx_.empty() &&
+            robot_cfg_->close_chain_motor_idx_.size() != 4) {
+            throw std::runtime_error("robot.close_chain_motor_idx must be empty or contain 4 motor indices");
+        }
+        for (size_t i = 0; i < robot_cfg_->close_chain_motor_idx_.size(); ++i) {
+            const long int index = robot_cfg_->close_chain_motor_idx_[i];
+            if (index < 0 || index >= static_cast<long int>(joint_count)) {
+                throw std::runtime_error("robot.close_chain_motor_idx[" + std::to_string(i) + "] is out of range");
+            }
+        }
         motor2urdf_ = std::vector<int>(motors_cfg_->motor_id_.size(), -1);
         for (size_t i = 0; i < robot_cfg_->urdf2motor_.size(); ++i) {
             motor2urdf_[robot_cfg_->urdf2motor_[i]] = i;
@@ -64,7 +124,7 @@ RobotInterface::RobotInterface(const std::string& config_file) {
         }
         cached_ankle_action_.resize(close_chain_joint_idx_.size(), 0.0f);
         last_ankle_joint_target_.resize(close_chain_joint_idx_.size(), 0.0f);
-        if (robot_node["type"]) {
+        if (!close_chain_joint_idx_.empty() && robot_node["type"]) {
             ankle_decouple_ = Decouple::create(robot_node["type"].as<std::string>());
         } else {
             ankle_decouple_ = nullptr;
@@ -136,7 +196,9 @@ void RobotInterface::apply_action(std::vector<float> p,
             joint_vel_[motor2urdf_[idx]] = motor->get_motor_spd() * robot_cfg_->motor_sign_[idx];
             joint_tau_[motor2urdf_[idx]] = motor->get_motor_current() * robot_cfg_->motor_sign_[idx];
             if (motor->get_response_count() > offline_threshold_) {
-                throw std::runtime_error("Motor id " + std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
+                throw std::runtime_error(
+                    "Motor " + motor->get_can_name() + " ID" +
+                    std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
             }
         });
 
@@ -245,7 +307,6 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
 
     constexpr int ramp_steps = 200;
     constexpr auto ramp_period = std::chrono::milliseconds(10);
-    constexpr float reset_kp_scale = 1.0f / 2.5f;
     for (int step = 1; step <= ramp_steps; step++) {
         const float alpha = static_cast<float>(step) / static_cast<float>(ramp_steps);
         {
@@ -253,7 +314,7 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
             for (size_t i = 0; i < motor_pos_target_.size(); i++){
                 motor_pos_target_[i] = start_motor_pos[i] + alpha * (target_motor_pos[i] - start_motor_pos[i]);
                 motor_vel_target_[i] = 0.0f;
-                motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]) * reset_kp_scale;
+                motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]);
                 motor_kd_target_[i]  = static_cast<float>(robot_cfg_->kd_[i]);
                 motor_tau_target_[i] = 0.0f;
             }
@@ -267,18 +328,9 @@ void RobotInterface::reset_joints(std::vector<double> joint_default_angle) {
         for (size_t i = 0; i < motor_pos_target_.size(); i++){
             motor_pos_target_[i] = target_motor_pos[i];
             motor_vel_target_[i] = 0.0f;
-            motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]) * reset_kp_scale;
+            motor_kp_target_[i]  = static_cast<float>(robot_cfg_->kp_[i]);
             motor_kd_target_[i]  = static_cast<float>(robot_cfg_->kd_[i]);
             motor_tau_target_[i] = 0.0f;
-        }
-    }
-    motors_mit_cmd();
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    {
-        std::unique_lock<std::mutex> lock(motors_mutex_);
-        for (size_t i = 0; i < motor_kp_target_.size(); i++){
-            motor_kp_target_[i] = static_cast<float>(robot_cfg_->kp_[i]);
         }
     }
     motors_mit_cmd();
@@ -305,6 +357,80 @@ void RobotInterface::refresh_joints() {
     }
 }
 
+std::vector<float> RobotInterface::sample_joint_q() {
+    if (!is_init_.load()) {
+        throw std::runtime_error("Motors not initialized");
+    }
+
+    std::unique_lock<std::mutex> lock(joint_mutex_);
+    exec_motors_parallel([this](std::shared_ptr<MotorDriver>& motor, int idx) {
+        joint_q_[motor2urdf_[idx]] = motor->get_motor_pos() * robot_cfg_->motor_sign_[idx];
+        joint_vel_[motor2urdf_[idx]] = motor->get_motor_spd() * robot_cfg_->motor_sign_[idx];
+        joint_tau_[motor2urdf_[idx]] = motor->get_motor_current() * robot_cfg_->motor_sign_[idx];
+        if (motor->get_response_count() > offline_threshold_) {
+            throw std::runtime_error(
+                "Motor " + motor->get_can_name() + " ID" +
+                std::to_string(motors_cfg_->motor_id_[idx]) + " offline");
+        }
+    });
+    if (!close_chain_joint_idx_.empty() && ankle_decouple_) {
+        forward_close_chain();
+    }
+    return joint_q_;
+}
+
+void RobotInterface::sample_telemetry(TelemetrySnapshot& snapshot) {
+    const size_t joint_count = joint_q_.size();
+    if (snapshot.joint_q.size() != joint_count) {
+        snapshot.resize(joint_count);
+    }
+
+    // Keep the same joint -> motor lock order used by apply_action().
+    std::unique_lock<std::mutex> joint_lock(joint_mutex_);
+    std::unique_lock<std::mutex> motor_lock(motors_mutex_);
+    for (size_t motor_idx = 0; motor_idx < motors_.size(); ++motor_idx) {
+        const size_t joint_idx = static_cast<size_t>(motor2urdf_[motor_idx]);
+        const float q = joint_q_[joint_idx];
+        const float dq = joint_vel_[joint_idx];
+        const float q_target = motor_pos_target_[motor_idx];
+        const float dq_target = motor_vel_target_[motor_idx];
+        const float tau_ff = motor_tau_target_[motor_idx];
+        const float kp = motor_kp_target_[motor_idx];
+        const float kd = motor_kd_target_[motor_idx];
+
+        snapshot.joint_q[joint_idx] = q;
+        snapshot.joint_vel[joint_idx] = dq;
+        snapshot.joint_target[joint_idx] = q_target;
+        snapshot.feedback_tau[joint_idx] = joint_tau_[joint_idx];
+        snapshot.demand_tau[joint_idx] =
+            kp * (q_target - q) + kd * (dq_target - dq) + tau_ff;
+        snapshot.hardware_tau_limit[joint_idx] =
+            motors_[motor_idx]->get_motor_torque_limit();
+        snapshot.motor_temperature[joint_idx] =
+            motors_[motor_idx]->get_motor_temperature();
+        snapshot.mos_temperature[joint_idx] =
+            motors_[motor_idx]->get_motor_mos_temperature();
+        snapshot.error_code[joint_idx] = motors_[motor_idx]->get_error_id();
+    }
+}
+
+std::string RobotInterface::joint_motor_label(size_t joint_idx) const {
+    if (joint_idx >= robot_cfg_->urdf2motor_.size()) {
+        return "unknown motor";
+    }
+    const size_t motor_idx = static_cast<size_t>(robot_cfg_->urdf2motor_[joint_idx]);
+    size_t bus_start = 0;
+    for (size_t bus = 0; bus < motors_cfg_->motor_num_.size(); ++bus) {
+        const size_t bus_count = static_cast<size_t>(motors_cfg_->motor_num_[bus]);
+        if (motor_idx < bus_start + bus_count) {
+            return motors_cfg_->motor_interface_[bus] + " ID" +
+                   std::to_string(motors_cfg_->motor_id_[motor_idx]);
+        }
+        bus_start += bus_count;
+    }
+    return "unknown motor";
+}
+
 void RobotInterface::set_zeros() {
     exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
         motor->set_motor_zero();
@@ -325,21 +451,27 @@ void RobotInterface::init_motors() {
 }
 
 void RobotInterface::deinit_motors() {
-    exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
-        motor->clear_motor_error();
-    });
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Block new control commands immediately, even if a later deinit command fails.
+    is_init_.store(false);
     for (int attempt = 0; attempt < 3; ++attempt) {
         exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
             motor->deinit_motor();
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    is_init_.store(false);
+    exec_motors_parallel([](std::shared_ptr<MotorDriver>& motor, int idx) {
+        motor->clear_motor_error();
+    });
 }
 
 void RobotInterface::motors_mit_cmd() {
+    if (!is_init_.load()) {
+        return;
+    }
     std::unique_lock<std::mutex> lock(motors_mutex_);
+    if (!is_init_.load()) {
+        return;
+    }
     std::vector<std::function<void()>> tasks;
     size_t count = 0;
     for (size_t bus = 0; bus < motors_cfg_->motor_interface_.size(); ++bus) {

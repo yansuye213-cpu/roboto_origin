@@ -309,13 +309,16 @@ screen -S joy_session -X quit
 
 - **X 键**: 使能 / 失能电机
 - **A 键**: 复位电机
-- **B 键**: 开始 / 暂停推理
+- **B 键**: 平滑开始策略控制 / 平滑回到并持续保持安全站姿
 - **Y 键**: 切换手柄控制 / cmd_vel 指令控制
 - **LB 键**: 切换策略模式（在 beyondmimic / interrupt 模式下可用）
-- **LSB（左摇杆按下）**: 进入 / 退出站立模式
+- **LSB（左摇杆按下）**: 在站立模式与策略控制之间平滑切换
 - **RB 键**: 切换运动序列（在 beyondmimic 模式下可用）
-- **右摇杆**: 控制前后左右移动
+- **RSB（右摇杆按下）**: 平滑进入 policy 默认姿态
+- **右摇杆**: 控制前后左右移动；按推动幅度输出 `0.5`、`0.7`、`1.0 m/s` 三档速度
 - **LT/RT**: 控制转向（左 / 右旋转）
+
+手柄控制模式下，`/joy` 超过 `joy_timeout_sec`（默认 `0.5` 秒）没有新消息时，行走速度指令会自动清零；恢复收到手柄消息后自动解除超时状态。切换手柄与 `/cmd_vel` 控制来源时也会先清零速度指令。
 
 ### 服务接口
 
@@ -543,12 +546,15 @@ done
 安装当前电脑专用 udev 规则：
 
 ```bash
-sudo cp assets/99-auto-up-devs-yansuye-legion.rules /etc/udev/rules.d/
-sudo rm -f /etc/udev/rules.d/99-auto-up-devs-orangepi.rules
-sudo rm -f /etc/udev/rules.d/99-auto-up-devs-sunrise.rules
+sudo install -m 0644 assets/99-auto-up-devs-asus.rules \
+  /etc/udev/rules.d/99-auto-up-devs-asus.rules
 sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo udevadm trigger --subsystem-match=net --action=add
+sudo udevadm settle
 ```
+
+该规则使用四个 USB-CAN 适配器的唯一序列号固定映射 `can0` 到
+`can3`，不依赖可能在重启后变化的 USB 总线编号。
 
 临时给 IMU 串口权限：
 
@@ -601,23 +607,46 @@ ros2 topic echo /joy --once
 
 当前手柄映射：
 
-- `A`: 复位到 `joint_default_angle`
-- `B`: 开始 / 暂停推理
+- `A`: 复位到 `reset_joint_angle`（未配置时兼容回退到 `joint_default_angle`）
+- `B`: 从当前关节姿态平滑进入策略控制 / 平滑回到并持续保持 `stand_joint_angle`
 - `X`: 使能 / 失能电机
 - `Y`: 切换手柄控制 / `/cmd_vel`
 - `LB`: 切换策略模式
-- `LSB`（左摇杆按下）: 进入 / 退出站立模式
+- `LSB`（左摇杆按下）: 在站立模式与策略控制之间平滑切换
 - `RB`: 切换运动序列
+- `RSB`（右摇杆按下）: 平滑进入 `joint_default_angle`
+- 右摇杆前后左右移动采用 `0.5`、`0.7`、`1.0 m/s` 三档速度
 
-首次验证默认位姿时，只使用：
+首次验证安全初始化姿态时，只使用：
 
 ```text
 X 使能电机
-A 复位默认位姿
+A 复位到安全初始化姿态
 X 失能电机
 ```
 
-不要先按 `B` 或 `LSB`。
+开始行走策略时，按 `X -> A -> RSB -> B`：先使能，复位到安全初始化姿态，
+再进入 policy 默认姿态，最后开始推理。不要从 A 的姿态直接按 `B`。
+
+默认行走配置会在按 `B` 进入推理时开始记录，并在按 `RSB` 退出推理时结束。
+每次运行只生成一个 CSV：`runtime_logs/run_<时间>.ok.csv`。运行中或未正常
+结束的文件后缀分别为 `.active.csv` 和 `.error.csv`；程序下次启动记录时会将
+遗留的 `.active.csv` 改名为 `.unclean.csv`。相对路径 `runtime_logs/` 固定解析为
+`modules/roboparty_deploy/runtime_logs/`，且不会被 Git 跟踪。
+
+关节反馈超出 `joint_limits` 时只会在终端报警，并在 CSV 中写入
+`joint_limit_exceeded`；回到范围内会写入 `joint_limit_restored`。反馈越界不会停止
+推理或失能电机，策略目标仍会被夹紧在配置限位内。跌倒、电机离线或控制/推理
+异常仍会停止发送控制目标并失能电机，将当前日志结束为 `.error.csv`，但不会退出
+`inference_node`。排除故障并扶稳机器人后，可重新按 `X`、`A`、`RSB`、`B`
+开始下一次测试；每次重新按 `B` 都会创建新的 CSV。
+
+CSV 每个 policy 周期记录一行。`q_actual_rad`、`dq_actual_rad_s` 和
+`q_target_rad` 分别是实际角度、实际角速度和最终发送目标；
+`tau_feedback_peak_nm` 与 `tau_demand_peak_nm` 是该 policy 周期内以 250 Hz
+采集的有符号力矩峰值。两个 `*_utilization` 使用 DM 型号硬件最大力矩计算，
+接近 `1.0` 表示接近最大力矩，大于 `1.0` 的 demand 表示控制器请求已超出
+电机能力。温度单位为摄氏度，DM 故障会同时写入可读的 `motor_fault` 事件行。
 
 ### 5. 常用 ROS 服务
 
@@ -669,12 +698,17 @@ ros2 service call /read_imu std_srvs/srv/Trigger
 ros2 topic echo /imu --once
 ```
 
-开始 / 停止推理：
+开始策略控制 / 回到安全站姿：
 
 ```bash
 ros2 service call /start_inference std_srvs/srv/Trigger
 ros2 service call /stop_inference std_srvs/srv/Trigger
 ```
+
+`start_inference` 使用 `policy_transition_time` 从当前实测关节姿态平滑接入策略。
+`stop_inference` 不停止电机控制，而是使用 `stand_transition_time` 平滑回到
+`stand_joint_angle` 并持续保持。`X` 或 `deinit_motors` 会直接失能电机，只能在
+机器人有悬吊或人工支撑时使用。
 
 ### 6. CAN 电机回包调试
 
@@ -722,7 +756,7 @@ can2: 右手 + 头，ID 从末端到身体递增
 can3: 左手，ID 从末端到身体递增
 ```
 
-当前 `joint_default_angle` 的 joint 顺序：
+`joint_default_angle` 是转换到实机 URDF 坐标后的策略默认姿态；`policy_joint_signs` 按 ONNX/Isaac 顺序描述策略坐标到实机坐标的方向转换；`reset_joint_angle` 是 A 键和 `reset_joints` 服务使用的实机安全初始化姿态；`stand_joint_angle` 是站立控制目标。姿态参数使用相同的实机 joint 顺序：
 
 ```text
 position[0:6]   左腿
@@ -731,6 +765,10 @@ position[12]    头
 position[13:17] 左手
 position[17:21] 右手
 ```
+
+`joint_limit_check_tolerance` 只用于吸收编码器回读的微小量化误差，不改变
+URDF 限位，也不放宽策略目标夹紧范围。越界超过该容差时，日志会同时打印
+关节名、CAN 接口、电机 ID、实测角度和上下限。
 
 ### 8. 安全验证顺序
 
@@ -742,6 +780,22 @@ position[17:21] 右手
 3. 启动 inference_node
 4. 启动 joy_node
 5. X 使能，确认电机只变硬、不乱动
-6. A 复位，确认机器人缓慢回默认位姿
-7. 确认 IMU 正常后，再考虑 B 推理或 LSB 站立模式
+6. A 复位，确认机器人缓慢回安全初始化姿态
+7. RSB 进入 policy 默认姿态，确认姿态与训练默认姿态一致
+8. 确认 IMU 正常后，再按 B 开始推理
 ```
+cd ~/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+./tools/start_robot.sh --robot rpo --policy default
+
+sudo nmcli con up limrobot-direct
+ssh limrobot@192.168.55.2
+
+source /home/yansuye/miniconda3/bin/activate
+conda activate mujoco
+
+cd /home/yansuye/Projects/RoboParty/roboto_origin/modules/roboparty_train
+
+python robolab/scripts/mujoco/sim2sim_rpo_onnx.py \
+  --load_model ../roboparty_deploy/src/inference/robots/rpo/models/policy.onnx

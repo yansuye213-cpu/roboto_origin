@@ -34,20 +34,20 @@ from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
 from isaaclab.utils import configclass
 
 from robolab.tasks.direct.base import mdp
-from robolab.assets.robots import RPO_CFG
+from robolab.assets.robots import RPO_ACTION_JOINT_NAMES, RPO_CFG
 from robolab.tasks.direct.base import (  # noqa:F401
-    BaseAgentCfg, 
-    BaseEnvCfg, 
-    RewardCfg, 
-    HeightScannerCfg, 
-    SceneContextCfg, 
-    RobotCfg, 
-    ObsScalesCfg, 
-    NormalizationCfg, 
-    CommandRangesCfg, 
-    CommandsCfg, 
-    NoiseScalesCfg, 
-    NoiseCfg, 
+    BaseAgentCfg,
+    BaseEnvCfg,
+    RewardCfg,
+    HeightScannerCfg,
+    SceneContextCfg,
+    RobotCfg,
+    ObsScalesCfg,
+    NormalizationCfg,
+    CommandRangesCfg,
+    CommandsCfg,
+    NoiseScalesCfg,
+    NoiseCfg,
     EventCfg,
     GRAVEL_TERRAINS_CFG,
     ROUGH_TERRAINS_CFG,
@@ -123,7 +123,7 @@ class RPORewardCfg(RewardCfg):
         weight=-0.03,
         params={
             "asset_cfg": SceneEntityCfg(
-                "robot", joint_names=[".*_thigh_yaw.*", ".*_thigh_roll.*"]
+                "robot", joint_names=[".*_leg_yaw.*", ".*_leg_roll.*"]
             )
         },
     )
@@ -132,7 +132,7 @@ class RPORewardCfg(RewardCfg):
         weight=-1.0,
         params={
             "asset_cfg": SceneEntityCfg(
-                "robot", joint_names=[".*torso.*", ".*_arm_roll.*", ".*_arm_yaw.*", ".*_elbow_pitch.*", ".*_elbow_yaw.*"]
+                "robot", joint_names=[".*head.*", ".*_shoulder_roll.*", ".*_shoulder_yaw.*", ".*_elbow_pitch.*"]
             )
         },
     )
@@ -142,14 +142,14 @@ class RPORewardCfg(RewardCfg):
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
-                joint_names=[".*_arm_pitch.*"],
+                joint_names=[".*_shoulder_pitch.*"],
             )
         },
     )
     joint_deviation_legs = RewTerm(
         func=mdp.joint_deviation_l1,
         weight=-0.01,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_thigh_pitch.*", ".*_knee.*", ".*_ankle_pitch.*", ".*_ankle_roll.*"])},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_leg_pitch.*", ".*_knee.*", ".*_ankle_pitch.*", ".*_ankle_roll.*"])},
     )
     feet_contact_without_cmd = RewTerm(
         func=mdp.feet_contact_without_cmd,
@@ -157,8 +157,8 @@ class RPORewardCfg(RewardCfg):
         params={"sensor_cfg": SceneEntityCfg("contact_sensor", body_names=[".*ankle_roll.*"])},
     )
     upward = RewTerm(func=mdp.upward, weight=0.4)
-    stand_still = RewTerm(func=mdp.stand_still, weight=-0.2, params={"pos_cfg": SceneEntityCfg("robot", joint_names=[".*_arm.*", ".*_elbow.*", ".*torso.*", ".*_thigh.*", ".*_knee.*", ".*_ankle.*"]),
-                                                                     "vel_cfg": SceneEntityCfg("robot", joint_names=[".*_arm.*", ".*_elbow.*", ".*torso.*", ".*_thigh.*", ".*_knee.*", ".*_ankle.*"]), 
+    stand_still = RewTerm(func=mdp.stand_still, weight=-0.2, params={"pos_cfg": SceneEntityCfg("robot", joint_names=[".*_shoulder.*", ".*_elbow.*", ".*head.*", ".*_leg.*", ".*_knee.*", ".*_ankle.*"]),
+                                                                     "vel_cfg": SceneEntityCfg("robot", joint_names=[".*_shoulder.*", ".*_elbow.*", ".*head.*", ".*_leg.*", ".*_knee.*", ".*_ankle.*"]),
                                                                      "pos_weight": 1.0, "vel_weight": 0.04})
     feet_height = RewTerm(
         func=mdp.feet_height,
@@ -177,9 +177,9 @@ class RPOFlatEnvCfg(BaseEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.action_space = 23
-        self.observation_space = 78
-        self.state_space = 139
+        self.action_space = 21
+        self.observation_space = 72
+        self.state_space = 129
         self.scene_context.robot = RPO_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene_context.height_scanner.prim_body_name = "base_link"
         self.scene_context.terrain_type = "generator"
@@ -190,10 +190,11 @@ class RPOFlatEnvCfg(BaseEnvCfg):
             physics_dt = self.sim.dt,
             step_dt = self.decimation * self.sim.dt
         )
-        self.robot.terminate_contacts_body_names = ["torso_link", ".*_thigh_yaw_link", ".*_thigh_roll_link"]
+        self.robot.expected_joint_names = RPO_ACTION_JOINT_NAMES
+        self.robot.terminate_contacts_body_names = ["base_link", "head_yaw_link", ".*_leg_pitch_link", ".*_leg_roll_link"]
         self.robot.feet_body_names = [".*ankle_roll.*"]
-        self.events.add_base_mass.params["asset_cfg"].body_names = ["torso_link", "base_link"]
-        self.events.randomize_rigid_body_com.params["asset_cfg"].body_names = ["torso_link", "base_link"]
+        self.events.add_base_mass.params["asset_cfg"].body_names = ["head_yaw_link", "base_link"]
+        self.events.randomize_rigid_body_com.params["asset_cfg"].body_names = ["head_yaw_link", "base_link"]
         self.events.scale_link_mass.params["asset_cfg"].body_names = ["left_.*_link", "right_.*_link"]
         self.events.scale_actuator_gains.params["asset_cfg"].joint_names = [".*_joint"]
         self.events.scale_joint_parameters.params["asset_cfg"].joint_names = [".*_joint"]
@@ -206,7 +207,7 @@ class RPOFlatEnvCfg(BaseEnvCfg):
 class RPORoughEnvCfg(RPOFlatEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.state_space = 326
+        self.state_space = 316
         self.scene_context.height_scanner.enable_height_scan = True
         self.scene_context.terrain_generator = ROUGH_TERRAINS_CFG
         self.scene = SceneCfg(

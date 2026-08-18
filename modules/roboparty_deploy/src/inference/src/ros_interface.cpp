@@ -19,7 +19,10 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("act_alpha", 0.9);
     this->declare_parameter<int>("intra_threads", -1);
     this->declare_parameter<std::string>("perception_obs_topic", "elevation_data");
-    this->declare_parameter<int>("joint_num", 23);
+    this->declare_parameter<bool>("run_log_enabled", false);
+    this->declare_parameter<std::string>("run_log_directory", "runtime_logs");
+    this->declare_parameter<int>("joint_num", 21);
+    this->declare_parameter<int>("interrupt_action_size", 8);
     this->declare_parameter<int>("decimation", 10);
     this->declare_parameter<float>("dt", 0.001);
     this->declare_parameter<float>("obs_scales_lin_vel", 1.0);
@@ -32,9 +35,20 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("clip_actions", 18.0);
     this->declare_parameter<std::vector<long int>>("usd2urdf", std::vector<long int>{});
     this->declare_parameter<std::vector<double>>("clip_cmd", std::vector<double>{});
+    this->declare_parameter<double>("joy_timeout_sec", 0.5);
+    this->declare_parameter<double>("joy_linear_axis_deadzone", 0.1);
+    this->declare_parameter<std::vector<double>>(
+        "joy_linear_axis_thresholds", std::vector<double>{0.5, 0.7});
+    this->declare_parameter<std::vector<double>>(
+        "joy_linear_speed_levels", std::vector<double>{0.5, 0.7, 1.0});
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
+    this->declare_parameter<std::vector<double>>("policy_joint_signs", std::vector<double>{});
+    this->declare_parameter<float>("policy_joint_limit_margin", 0.0);
+    this->declare_parameter<float>("joint_limit_check_tolerance", 0.005);
+    this->declare_parameter<std::vector<double>>("reset_joint_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("stand_joint_angle", std::vector<double>{});
     this->declare_parameter<float>("stand_transition_time", 1.5);
+    this->declare_parameter<float>("policy_transition_time", 2.0);
     this->declare_parameter<std::string>("stand_whole_body_model_path", "");
     this->declare_parameter<std::string>("stand_whole_body_base_link", "");
     this->declare_parameter<std::string>("stand_whole_body_left_foot_link", "");
@@ -43,9 +57,9 @@ void InferenceNode::load_config() {
     this->declare_parameter<bool>("stand_validate_whole_body_model", false);
     this->declare_parameter<bool>("stand_wbc_mpc_enabled", true);
     this->declare_parameter<std::string>("stand_wbc_mpc_backend", "ocs2");
-    this->declare_parameter<bool>("stand_wbc_mpc_mrt_enabled", false);
-    this->declare_parameter<bool>("stand_wbc_mpc_mrt_first_solve_blocking", true);
-    this->declare_parameter<float>("stand_wbc_mpc_mrt_max_policy_age", 0.08);
+    this->declare_parameter<bool>("stand_wbc_mpc_mrt_enabled", true);
+    this->declare_parameter<bool>("stand_wbc_mpc_mrt_first_solve_blocking", false);
+    this->declare_parameter<float>("stand_wbc_mpc_mrt_max_policy_age", 0.20);
     this->declare_parameter<int>("stand_wbc_mpc_horizon", 20);
     this->declare_parameter<float>("stand_wbc_mpc_dt", 0.012);
     this->declare_parameter<float>("stand_wbc_target_roll", 0.0);
@@ -75,6 +89,10 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("stand_wbc_mpc_max_angular_accel", 12.0);
     this->declare_parameter<float>("stand_wbc_mpc_max_com_accel", 2.0);
     this->declare_parameter<float>("stand_wbc_mpc_max_contact_force_delta", 60.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_roll_sign", 1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_pitch_sign", -1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_roll_scale", 1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_output_pitch_scale", 1.0);
     this->declare_parameter<float>("stand_wbc_mpc_base_height_weight", 5.0);
     this->declare_parameter<float>("stand_wbc_mpc_yaw_weight", 1.0);
     this->declare_parameter<float>("stand_wbc_mpc_joint_angle_weight", 0.5);
@@ -83,6 +101,9 @@ void InferenceNode::load_config() {
     this->declare_parameter<bool>("stand_wbc_mpc_joint_command_enabled", false);
     this->declare_parameter<float>("stand_wbc_mpc_joint_command_position_gain", 0.25);
     this->declare_parameter<float>("stand_wbc_mpc_joint_command_velocity_scale", 1.0);
+    this->declare_parameter<float>("stand_wbc_mpc_joint_command_max_delta", 0.00025);
+    this->declare_parameter<float>("stand_wbc_mpc_joint_command_max_velocity", 0.15);
+    this->declare_parameter<std::vector<double>>("stand_wbc_mpc_joint_command_joint_scale", std::vector<double>{});
     this->declare_parameter<float>("stand_wbc_mpc_swing_time_scale", 0.15);
     this->declare_parameter<float>("stand_wbc_mpc_swing_lift_off_velocity", 0.0);
     this->declare_parameter<float>("stand_wbc_mpc_swing_touch_down_velocity", 0.0);
@@ -115,6 +136,8 @@ void InferenceNode::load_config() {
     this->declare_parameter<float>("stand_wbc_regularization_weight", 0.0001);
     this->declare_parameter<float>("stand_wbc_smooth_weight", 0.02);
     this->declare_parameter<float>("stand_wbc_max_body_moment", 8.0);
+    this->declare_parameter<float>("stand_wbc_body_moment_rate_limit", 0.0);
+    this->declare_parameter<float>("stand_wbc_body_moment_filter_weight", 0.0);
     this->declare_parameter<float>("stand_wbc_max_joint_torque", 0.6);
     this->declare_parameter<float>("stand_wbc_foot_half_length", 0.065);
     this->declare_parameter<float>("stand_wbc_foot_half_width", 0.035);
@@ -196,7 +219,16 @@ void InferenceNode::load_config() {
     this->get_parameter("act_alpha", act_alpha_);
     this->get_parameter("intra_threads", intra_threads_);
     this->get_parameter("perception_obs_topic", perception_obs_topic_);
+    this->get_parameter("run_log_enabled", run_log_enabled_);
+    this->get_parameter("run_log_directory", run_log_directory_);
+    if (std::filesystem::path(run_log_directory_).is_relative()) {
+        const std::filesystem::path deploy_root =
+            (std::filesystem::path(ROOT_DIR) / ".." / "..").lexically_normal();
+        run_log_directory_ =
+            (deploy_root / run_log_directory_).lexically_normal().string();
+    }
     this->get_parameter("joint_num", joint_num_);
+    this->get_parameter("interrupt_action_size", interrupt_action_size_);
     this->get_parameter("decimation", decimation_);
     this->get_parameter("dt", dt_);
     this->get_parameter("obs_scales_lin_vel", obs_scales_lin_vel_);
@@ -209,9 +241,18 @@ void InferenceNode::load_config() {
     this->get_parameter("clip_actions", clip_actions_);
     this->get_parameter("usd2urdf", usd2urdf_);
     this->get_parameter("clip_cmd", clip_cmd_);
+    this->get_parameter("joy_timeout_sec", joy_timeout_sec_);
+    this->get_parameter("joy_linear_axis_deadzone", joy_linear_axis_deadzone_);
+    this->get_parameter("joy_linear_axis_thresholds", joy_linear_axis_thresholds_);
+    this->get_parameter("joy_linear_speed_levels", joy_linear_speed_levels_);
     this->get_parameter("joint_default_angle", joint_default_angle_);
+    this->get_parameter("policy_joint_signs", policy_joint_signs_);
+    this->get_parameter("policy_joint_limit_margin", policy_joint_limit_margin_);
+    this->get_parameter("joint_limit_check_tolerance", joint_limit_check_tolerance_);
+    this->get_parameter("reset_joint_angle", reset_joint_angle_);
     this->get_parameter("stand_joint_angle", stand_joint_angle_);
     this->get_parameter("stand_transition_time", stand_transition_time_);
+    this->get_parameter("policy_transition_time", policy_transition_time_);
     this->get_parameter("stand_whole_body_model_path", stand_stabilizer_config_.whole_body_model_path);
     this->get_parameter("stand_whole_body_base_link", stand_stabilizer_config_.whole_body_base_link);
     this->get_parameter("stand_whole_body_left_foot_link", stand_stabilizer_config_.whole_body_left_foot_link);
@@ -252,6 +293,10 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_mpc_max_angular_accel", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
     this->get_parameter("stand_wbc_mpc_max_com_accel", stand_stabilizer_config_.wbc_mpc_max_com_accel);
     this->get_parameter("stand_wbc_mpc_max_contact_force_delta", stand_stabilizer_config_.wbc_mpc_max_contact_force_delta);
+    this->get_parameter("stand_wbc_mpc_output_roll_sign", stand_stabilizer_config_.wbc_mpc_output_roll_sign);
+    this->get_parameter("stand_wbc_mpc_output_pitch_sign", stand_stabilizer_config_.wbc_mpc_output_pitch_sign);
+    this->get_parameter("stand_wbc_mpc_output_roll_scale", stand_stabilizer_config_.wbc_mpc_output_roll_scale);
+    this->get_parameter("stand_wbc_mpc_output_pitch_scale", stand_stabilizer_config_.wbc_mpc_output_pitch_scale);
     this->get_parameter("stand_wbc_mpc_base_height_weight", stand_stabilizer_config_.wbc_mpc_base_height_weight);
     this->get_parameter("stand_wbc_mpc_yaw_weight", stand_stabilizer_config_.wbc_mpc_yaw_weight);
     this->get_parameter("stand_wbc_mpc_joint_angle_weight", stand_stabilizer_config_.wbc_mpc_joint_angle_weight);
@@ -260,6 +305,9 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_mpc_joint_command_enabled", stand_stabilizer_config_.wbc_mpc_joint_command_enabled);
     this->get_parameter("stand_wbc_mpc_joint_command_position_gain", stand_stabilizer_config_.wbc_mpc_joint_command_position_gain);
     this->get_parameter("stand_wbc_mpc_joint_command_velocity_scale", stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale);
+    this->get_parameter("stand_wbc_mpc_joint_command_max_delta", stand_stabilizer_config_.wbc_mpc_joint_command_max_delta);
+    this->get_parameter("stand_wbc_mpc_joint_command_max_velocity", stand_stabilizer_config_.wbc_mpc_joint_command_max_velocity);
+    this->get_parameter("stand_wbc_mpc_joint_command_joint_scale", stand_stabilizer_config_.wbc_mpc_joint_command_joint_scale);
     this->get_parameter("stand_wbc_mpc_swing_time_scale", stand_stabilizer_config_.wbc_mpc_swing_time_scale);
     this->get_parameter("stand_wbc_mpc_swing_lift_off_velocity", stand_stabilizer_config_.wbc_mpc_swing_lift_off_velocity);
     this->get_parameter("stand_wbc_mpc_swing_touch_down_velocity", stand_stabilizer_config_.wbc_mpc_swing_touch_down_velocity);
@@ -292,6 +340,8 @@ void InferenceNode::load_config() {
     this->get_parameter("stand_wbc_regularization_weight", stand_stabilizer_config_.wbc_regularization_weight);
     this->get_parameter("stand_wbc_smooth_weight", stand_stabilizer_config_.wbc_smooth_weight);
     this->get_parameter("stand_wbc_max_body_moment", stand_stabilizer_config_.wbc_max_body_moment);
+    this->get_parameter("stand_wbc_body_moment_rate_limit", stand_stabilizer_config_.wbc_body_moment_rate_limit);
+    this->get_parameter("stand_wbc_body_moment_filter_weight", stand_stabilizer_config_.wbc_body_moment_filter_weight);
     this->get_parameter("stand_wbc_max_joint_torque", stand_stabilizer_config_.wbc_max_joint_torque);
     this->get_parameter("stand_wbc_foot_half_length", stand_stabilizer_config_.wbc_foot_half_length);
     this->get_parameter("stand_wbc_foot_half_width", stand_stabilizer_config_.wbc_foot_half_width);
@@ -348,8 +398,12 @@ void InferenceNode::load_config() {
     if (!stand_stabilizer_config_.whole_body_model_path.empty()) {
         const std::filesystem::path model_path(stand_stabilizer_config_.whole_body_model_path);
         if (model_path.is_relative()) {
+            std::filesystem::path robot_config_path(robot_config_path_);
+            if (robot_config_path.is_relative()) {
+                robot_config_path = std::filesystem::absolute(robot_config_path);
+            }
             stand_stabilizer_config_.whole_body_model_path =
-                (std::filesystem::path(ROOT_DIR) / model_path).lexically_normal().string();
+                (robot_config_path.parent_path() / model_path).lexically_normal().string();
         }
     }
     std::vector<double> stand_kp_config;
@@ -362,6 +416,9 @@ void InferenceNode::load_config() {
     if (joint_num_ <= 0) {
         throw std::runtime_error("joint_num must be positive");
     }
+    if (interrupt_action_size_ <= 0 || interrupt_action_size_ > joint_num_) {
+        throw std::runtime_error("interrupt_action_size must be positive and no larger than joint_num");
+    }
     if (clip_cmd_.size() != 6) {
         throw std::runtime_error("clip_cmd must contain [min_vx, max_vx, min_vy, max_vy, min_wz, max_wz]");
     }
@@ -371,6 +428,48 @@ void InferenceNode::load_config() {
     if (joint_default_angle_.size() != static_cast<size_t>(joint_num_)) {
         throw std::runtime_error("joint_default_angle must have the same size as joint_num");
     }
+    if (policy_joint_signs_.empty()) {
+        policy_joint_signs_.assign(joint_num_, 1.0);
+    }
+    if (policy_joint_signs_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("policy_joint_signs must be empty or have the same size as joint_num");
+    }
+    for (size_t i = 0; i < policy_joint_signs_.size(); ++i) {
+        if (policy_joint_signs_[i] != -1.0 && policy_joint_signs_[i] != 1.0) {
+            throw std::runtime_error("policy_joint_signs[" + std::to_string(i) + "] must be -1 or 1");
+        }
+    }
+    if (policy_joint_limit_margin_ < 0.0f) {
+        throw std::runtime_error("policy_joint_limit_margin must be non-negative");
+    }
+    if (reset_joint_angle_.empty()) {
+        reset_joint_angle_ = joint_default_angle_;
+    }
+    if (reset_joint_angle_.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("reset_joint_angle must be empty or have the same size as joint_num");
+    }
+    if (joy_timeout_sec_ < 0.0) {
+        throw std::runtime_error("joy_timeout_sec must be non-negative");
+    }
+    if (joy_linear_axis_thresholds_.size() != 2 ||
+        joy_linear_speed_levels_.size() != 3) {
+        throw std::runtime_error(
+            "joy linear mapping requires 2 axis thresholds and 3 speed levels");
+    }
+    if (joy_linear_axis_deadzone_ < 0.0 ||
+        joy_linear_axis_deadzone_ >= joy_linear_axis_thresholds_[0] ||
+        joy_linear_axis_thresholds_[0] >= joy_linear_axis_thresholds_[1] ||
+        joy_linear_axis_thresholds_[1] > 1.0) {
+        throw std::runtime_error(
+            "joy linear axis mapping must satisfy 0 <= deadzone < threshold0 "
+            "< threshold1 <= 1");
+    }
+    if (joy_linear_speed_levels_[0] <= 0.0 ||
+        joy_linear_speed_levels_[0] > joy_linear_speed_levels_[1] ||
+        joy_linear_speed_levels_[1] > joy_linear_speed_levels_[2]) {
+        throw std::runtime_error(
+            "joy linear speed levels must be positive and non-decreasing");
+    }
     if (stand_joint_angle_.empty()) {
         stand_joint_angle_ = joint_default_angle_;
     }
@@ -379,6 +478,12 @@ void InferenceNode::load_config() {
     }
     if (stand_transition_time_ <= 0.0f) {
         throw std::runtime_error("stand_transition_time must be positive");
+    }
+    if (policy_transition_time_ <= 0.0f) {
+        throw std::runtime_error("policy_transition_time must be positive");
+    }
+    if (joint_limit_check_tolerance_ < 0.0f) {
+        throw std::runtime_error("joint_limit_check_tolerance must be non-negative");
     }
     stand_stabilizer_config_.joint_num = joint_num_;
     stand_stabilizer_config_.dt = dt_;
@@ -433,6 +538,8 @@ void InferenceNode::load_config() {
         stand_stabilizer_config_.wbc_regularization_weight < 0.0f ||
         stand_stabilizer_config_.wbc_smooth_weight < 0.0f ||
         stand_stabilizer_config_.wbc_max_body_moment < 0.0f ||
+        stand_stabilizer_config_.wbc_body_moment_rate_limit < 0.0f ||
+        stand_stabilizer_config_.wbc_body_moment_filter_weight < 0.0f ||
         stand_stabilizer_config_.wbc_max_joint_torque < 0.0f ||
         stand_stabilizer_config_.wbc_foot_half_length < 0.0f ||
         stand_stabilizer_config_.wbc_foot_half_width < 0.0f) {
@@ -515,6 +622,12 @@ void InferenceNode::load_config() {
         if (!joint_limits_.empty()) {
             const double lower = joint_limits_[i * 2];
             const double upper = joint_limits_[i * 2 + 1];
+            if (lower + policy_joint_limit_margin_ > upper - policy_joint_limit_margin_) {
+                throw std::runtime_error("policy_joint_limit_margin leaves no range for joint " + std::to_string(i));
+            }
+            if (reset_joint_angle_[i] < lower || reset_joint_angle_[i] > upper) {
+                throw std::runtime_error("reset_joint_angle[" + std::to_string(i) + "] is out of joint range");
+            }
             if (stand_joint_angle_[i] < lower || stand_joint_angle_[i] > upper) {
                 throw std::runtime_error("stand_joint_angle[" + std::to_string(i) + "] is out of joint range");
             }
@@ -574,10 +687,15 @@ void InferenceNode::load_config() {
         policy.obs_layout = parse_obs_layout(obs_layouts[i], "obs_layouts[" + std::to_string(i) + "]");
         policy.obs_layout_sizes.reserve(policy.obs_layout.size());
         for (const ObsSourceSpec& source : policy.obs_layout) {
-            if ((source.name == "dof_pos" || source.name == "dof_vel" || source.name == "last_action") &&
-                source.size < joint_num_) {
+            const bool joint_sized_source =
+                source.name == "dof_pos" ||
+                source.name == "dof_vel" ||
+                source.name == "last_action" ||
+                source.name == "motion_pos" ||
+                source.name == "motion_vel";
+            if (joint_sized_source && source.size != joint_num_) {
                 throw std::runtime_error(source.name + " in obs_layouts[" + std::to_string(i) +
-                                         "] must be at least joint_num");
+                                         "] must equal joint_num");
             }
             policy.obs_layout_sizes.push_back(source.size);
             policy.obs_num += source.size;
@@ -588,6 +706,16 @@ void InferenceNode::load_config() {
         if (!policy_extra_obs_layout.empty()) {
             policy.extra_obs_layout = parse_obs_layout(policy_extra_obs_layout, "extra_obs_layouts[" + std::to_string(i) + "]");
             for (const ObsSourceSpec& source : policy.extra_obs_layout) {
+                const bool joint_sized_source =
+                    source.name == "dof_pos" ||
+                    source.name == "dof_vel" ||
+                    source.name == "last_action" ||
+                    source.name == "motion_pos" ||
+                    source.name == "motion_vel";
+                if (joint_sized_source && source.size != joint_num_) {
+                    throw std::runtime_error(source.name + " in extra_obs_layouts[" + std::to_string(i) +
+                                             "] must equal joint_num");
+                }
                 policy.extra_obs_num += source.size;
                 if (source.name == "perception") {
                     perception_obs_num_ = source.size;
@@ -621,6 +749,7 @@ void InferenceNode::load_config() {
     print_vector<std::string>("extra_obs_layouts", extra_obs_layouts);
     RCLCPP_INFO(this->get_logger(), "perception_obs_topic: %s", perception_obs_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "joint_num: %d", joint_num_);
+    RCLCPP_INFO(this->get_logger(), "interrupt_action_size: %d", interrupt_action_size_);
     RCLCPP_INFO(this->get_logger(), "decimation: %d", decimation_);
     RCLCPP_INFO(this->get_logger(), "dt: %f", dt_);
     RCLCPP_INFO(this->get_logger(), "obs_scales_lin_vel: %f", obs_scales_lin_vel_);
@@ -632,9 +761,20 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "clip_actions: %f", clip_actions_);
     print_vector<long int>("usd2urdf", usd2urdf_);
     print_vector<double>("clip_cmd", clip_cmd_);
+    RCLCPP_INFO(this->get_logger(), "joy_timeout_sec: %f", joy_timeout_sec_);
+    RCLCPP_INFO(this->get_logger(), "joy_linear_axis_deadzone: %f",
+                joy_linear_axis_deadzone_);
+    print_vector<double>("joy_linear_axis_thresholds",
+                         joy_linear_axis_thresholds_);
+    print_vector<double>("joy_linear_speed_levels", joy_linear_speed_levels_);
     print_vector<double>("joint_default_angle", joint_default_angle_);
+    print_vector<double>("policy_joint_signs", policy_joint_signs_);
+    RCLCPP_INFO(this->get_logger(), "policy_joint_limit_margin: %f", policy_joint_limit_margin_);
+    RCLCPP_INFO(this->get_logger(), "joint_limit_check_tolerance: %f", joint_limit_check_tolerance_);
+    print_vector<double>("reset_joint_angle", reset_joint_angle_);
     print_vector<double>("stand_joint_angle", stand_joint_angle_);
     RCLCPP_INFO(this->get_logger(), "stand_transition_time: %f", stand_transition_time_);
+    RCLCPP_INFO(this->get_logger(), "policy_transition_time: %f", policy_transition_time_);
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_model_path: %s", stand_stabilizer_config_.whole_body_model_path.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_base_link: %s", stand_stabilizer_config_.whole_body_base_link.c_str());
     RCLCPP_INFO(this->get_logger(), "stand_whole_body_left_foot_link: %s", stand_stabilizer_config_.whole_body_left_foot_link.c_str());
@@ -676,8 +816,13 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_angular_accel: %f", stand_stabilizer_config_.wbc_mpc_max_angular_accel);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_com_accel: %f", stand_stabilizer_config_.wbc_mpc_max_com_accel);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_max_contact_force_delta: %f", stand_stabilizer_config_.wbc_mpc_max_contact_force_delta);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_mpc_output_signs: roll=%f pitch=%f scale=[%f, %f]",
+                stand_stabilizer_config_.wbc_mpc_output_roll_sign,
+                stand_stabilizer_config_.wbc_mpc_output_pitch_sign,
+                stand_stabilizer_config_.wbc_mpc_output_roll_scale,
+                stand_stabilizer_config_.wbc_mpc_output_pitch_scale);
     RCLCPP_INFO(this->get_logger(),
-                "stand_wbc_mpc_full_centroidal_weights: base_height=%f yaw=%f joint_angle=%f joint_velocity=%f swing_position=%f swing_time_scale=%f joint_cmd=%s pos_gain=%f vel_scale=%f",
+                "stand_wbc_mpc_full_centroidal_weights: base_height=%f yaw=%f joint_angle=%f joint_velocity=%f swing_position=%f swing_time_scale=%f joint_cmd=%s pos_gain=%f vel_scale=%f max_delta=%f max_vel=%f",
                 stand_stabilizer_config_.wbc_mpc_base_height_weight,
                 stand_stabilizer_config_.wbc_mpc_yaw_weight,
                 stand_stabilizer_config_.wbc_mpc_joint_angle_weight,
@@ -686,7 +831,9 @@ void InferenceNode::load_config() {
                 stand_stabilizer_config_.wbc_mpc_swing_time_scale,
                 stand_stabilizer_config_.wbc_mpc_joint_command_enabled ? "true" : "false",
                 stand_stabilizer_config_.wbc_mpc_joint_command_position_gain,
-                stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale);
+                stand_stabilizer_config_.wbc_mpc_joint_command_velocity_scale,
+                stand_stabilizer_config_.wbc_mpc_joint_command_max_delta,
+                stand_stabilizer_config_.wbc_mpc_joint_command_max_velocity);
     RCLCPP_INFO(this->get_logger(),
                 "stand_wbc_mpc_ad: folder=%s recompile=%s verbose=%s",
                 stand_stabilizer_config_.wbc_mpc_ad_model_folder.c_str(),
@@ -729,6 +876,8 @@ void InferenceNode::load_config() {
     RCLCPP_INFO(this->get_logger(), "stand_wbc_regularization_weight: %f", stand_stabilizer_config_.wbc_regularization_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_smooth_weight: %f", stand_stabilizer_config_.wbc_smooth_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_body_moment: %f", stand_stabilizer_config_.wbc_max_body_moment);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_body_moment_rate_limit: %f", stand_stabilizer_config_.wbc_body_moment_rate_limit);
+    RCLCPP_INFO(this->get_logger(), "stand_wbc_body_moment_filter_weight: %f", stand_stabilizer_config_.wbc_body_moment_filter_weight);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_max_joint_torque: %f", stand_stabilizer_config_.wbc_max_joint_torque);
     RCLCPP_INFO(this->get_logger(), "stand_wbc_foot_geometry: half_length=%f half_width=%f center_x=%f contact_z=%f",
                 stand_stabilizer_config_.wbc_foot_half_length,
@@ -786,68 +935,204 @@ void InferenceNode::load_config() {
                 stand_stabilizer_config_.wbc_swing_max_joint_delta,
                 stand_stabilizer_config_.wbc_swing_max_joint_velocity);
     print_vector<double>("stand_wbc_torque_joint_scale", stand_stabilizer_config_.wbc_torque_joint_scale);
+    print_vector<double>("stand_wbc_mpc_joint_command_joint_scale", stand_stabilizer_config_.wbc_mpc_joint_command_joint_scale);
     print_vector<float>("stand_kp", stand_kp_);
     print_vector<float>("stand_kd", stand_kd_);
     print_vector<double>("joint_limits", joint_limits_);
     RCLCPP_INFO(this->get_logger(), "gravity_z_upper: %f", gravity_z_upper_);
+    RCLCPP_INFO(this->get_logger(), "run_log: enabled=%s directory=%s",
+                run_log_enabled_ ? "true" : "false", run_log_directory_.c_str());
 }
 
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
-    constexpr int kButtonA = 0;
-    constexpr int kButtonB = 1;
-    constexpr int kButtonY = 2;
-    constexpr int kButtonX = 3;
-    constexpr int kButtonLB = 4;
-    constexpr int kButtonRB = 5;
-    constexpr int kButtonLSB = 11;
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    last_joy_message_ns_.store(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),
+        std::memory_order_relaxed);
+    if (joy_watchdog_timed_out_.exchange(false)) {
+        RCLCPP_INFO(this->get_logger(), "Joystick connection restored");
+        if (run_logger_) {
+            run_logger_->record_event("joystick_restored");
+        }
+    }
+
+    constexpr size_t kButtonA = 0;
+    constexpr size_t kButtonB = 1;
+    constexpr size_t kButtonY = 2;
+    constexpr size_t kButtonX = 3;
+    constexpr size_t kButtonLB = 4;
+    constexpr size_t kButtonRB = 5;
+    constexpr size_t kButtonLSB = 11;
+    constexpr size_t kButtonRSB = 12;
+    constexpr size_t kRequiredAxes = 6;
+    constexpr size_t kRequiredBasicButtons = kButtonX + 1;
+
+    const auto button = [&msg](size_t index) -> int {
+        return index < msg->buttons.size() ? msg->buttons[index] : 0;
+    };
+    const int button_a = button(kButtonA);
+    const int button_b = button(kButtonB);
+    const int button_y = button(kButtonY);
+    const int button_x = button(kButtonX);
+    const int button_lb = button(kButtonLB);
+    const int button_rb = button(kButtonRB);
+    const int button_lsb = button(kButtonLSB);
+    const int button_rsb = button(kButtonRSB);
+
+    if (msg->axes.size() < kRequiredAxes ||
+        msg->buttons.size() < kRequiredBasicButtons) {
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 5000,
+            "Joy message too small: axes=%zu (need at least %zu), buttons=%zu "
+            "(need at least %zu); missing controls ignored",
+            msg->axes.size(), kRequiredAxes, msg->buttons.size(),
+            kRequiredBasicButtons);
+    }
+
+    if (runtime_fault_handling_.load()) {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        last_button0_ = button_x;
+        last_button1_ = button_a;
+        last_button2_ = button_b;
+        last_button3_ = button_y;
+        last_button4_ = button_lb;
+        last_button5_ = button_rb;
+        last_button_lsb_ = button_lsb;
+        last_button_rsb_ = button_rsb;
+        return;
+    }
 
     if (is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
-        cmd_vel_[0] = std::clamp(msg->axes[4] * clip_cmd_[1], clip_cmd_[0], clip_cmd_[1]);
-        cmd_vel_[1] = std::clamp(msg->axes[3] * clip_cmd_[3], clip_cmd_[2], clip_cmd_[3]);
+        if (msg->axes.size() < kRequiredAxes) {
+            std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        } else {
+            const auto map_linear_axis = [this](float axis) {
+                const double magnitude = std::abs(static_cast<double>(axis));
+                if (magnitude <= joy_linear_axis_deadzone_) {
+                    return 0.0;
+                }
+                const size_t level =
+                    magnitude <= joy_linear_axis_thresholds_[0] ? 0 :
+                    magnitude <= joy_linear_axis_thresholds_[1] ? 1 : 2;
+                return std::copysign(joy_linear_speed_levels_[level],
+                                     static_cast<double>(axis));
+            };
+            cmd_vel_[0] = static_cast<float>(std::clamp(
+                map_linear_axis(msg->axes[4]), clip_cmd_[0], clip_cmd_[1]));
+            cmd_vel_[1] = static_cast<float>(std::clamp(
+                map_linear_axis(msg->axes[3]), clip_cmd_[2], clip_cmd_[3]));
             if (msg->axes[2] < 0) {
-            cmd_vel_[2] = std::clamp(-msg->axes[2] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
+                cmd_vel_[2] = std::clamp(-msg->axes[2] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
             } else if (msg->axes[5] < 0) {
-            cmd_vel_[2] = std::clamp(msg->axes[5] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
+                cmd_vel_[2] = std::clamp(msg->axes[5] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
             } else {
-            cmd_vel_[2] = 0.0;
+                cmd_vel_[2] = 0.0;
+            }
         }
     }
-    if ((msg->buttons[kButtonX] == 1 && msg->buttons[kButtonX] != last_button0_)) {
-        if(is_running_.load()){
-            reset_runtime_state();
-            RCLCPP_INFO(this->get_logger(), "Inference paused");
-        }
-        if (robot_->is_init_.load()){
-            robot_->deinit_motors();
-            RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
+    if (button_x == 1 && button_x != last_button0_) {
+        if (runtime_fault_handling_.load()) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Runtime fault handling is still disabling motors; X ignored");
         } else {
-            robot_->init_motors();
-            RCLCPP_INFO(this->get_logger(), "Motors initialized");
+            try {
+                std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+                if (runtime_fault_handling_.load()) {
+                    RCLCPP_WARN(this->get_logger(),
+                                "Runtime fault handling is still disabling motors; X ignored");
+                } else if(is_running_.load()){
+                    finish_run_log("button_x", "motors deinitialized during policy", false);
+                    reset_runtime_state();
+                    RCLCPP_INFO(this->get_logger(), "Inference paused");
+                    robot_->deinit_motors();
+                    RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
+                } else if (robot_->is_init_.load()){
+                    robot_->deinit_motors();
+                    RCLCPP_INFO(this->get_logger(), "Motors deinitialized");
+                } else {
+                    robot_->init_motors();
+                    RCLCPP_INFO(this->get_logger(), "Motors initialized");
+                }
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed: %s", e.what());
+            } catch (...) {
+                RCLCPP_ERROR(this->get_logger(), "Motor initialization toggle failed with an unknown error");
+            }
         }
     }
-    if (msg->buttons[kButtonA] == 1 && msg->buttons[kButtonA] != last_button1_) {
-        if (is_running_.load()){
-            reset_runtime_state();
-            RCLCPP_INFO(this->get_logger(), "Inference paused");
-        }
-        if (!robot_->is_init_.load()){
-            RCLCPP_INFO(this->get_logger(), "Motors are not initialized!");
-        } else {
-            robot_->reset_joints(joint_default_angle_);
-            RCLCPP_INFO(this->get_logger(), "Motors reset");
+    if (button_a == 1 && button_a != last_button1_) {
+        try {
+            if (is_running_.load()){
+                finish_run_log("button_a", "reset requested during policy", false);
+                reset_runtime_state();
+                RCLCPP_INFO(this->get_logger(), "Inference paused");
+            }
+            if (!robot_->is_init_.load()){
+                RCLCPP_INFO(this->get_logger(), "Motors are not initialized!");
+            } else {
+                robot_->reset_joints(reset_joint_angle_);
+                sync_action_reference(robot_->sample_joint_q());
+                RCLCPP_INFO(this->get_logger(), "Motors reset");
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Motor reset failed: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(), "Motor reset failed with an unknown error");
         }
     }
-    if (msg->buttons[kButtonB] == 1 && msg->buttons[kButtonB] != last_button2_) {
-        is_running_.store(!is_running_.load());
-        RCLCPP_INFO(this->get_logger(), "Control %s", is_running_.load() ? "started" : "paused");
+    if (button_b == 1 && button_b != last_button2_) {
+        try {
+            std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+            if (runtime_fault_handling_.load()) {
+                RCLCPP_WARN(this->get_logger(),
+                            "Runtime fault handling is still disabling motors; B ignored");
+            } else if (!robot_->is_init_.load()) {
+                RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot toggle policy control");
+            } else {
+                const std::vector<float> current_joint_q = robot_->sample_joint_q();
+                std::unique_lock<std::mutex> lock(mode_mutex_);
+                if (control_mode_ == ControlMode::Policy && is_running_.load()) {
+                    lock.unlock();
+                    finish_run_log("button_b", "policy manually stopped", true);
+                    lock.lock();
+                    enter_safe_stand_locked(current_joint_q);
+                    RCLCPP_INFO(this->get_logger(),
+                                "Policy paused; transitioning to and holding safe stand pose");
+                } else if (!active_policy().inference_enabled || !active_policy().ctx) {
+                    RCLCPP_WARN(this->get_logger(),
+                                "Cannot start policy mode: policy %s is disabled: %s. Use LSB for stand mode.",
+                                active_policy().name.c_str(),
+                                active_policy().disabled_reason.c_str());
+                } else {
+                    start_policy_transition_locked(current_joint_q);
+                    RCLCPP_INFO(this->get_logger(),
+                                "Policy started with %.2f s transition from current joint pose",
+                                policy_transition_time_);
+                }
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Policy control toggle failed: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(), "Policy control toggle failed with an unknown error");
+        }
     }
-    if (msg->buttons[kButtonY] == 1 && msg->buttons[kButtonY] != last_button3_) {
+    if (button_y == 1 && button_y != last_button3_) {
         is_joy_control_.store(!is_joy_control_);
+        {
+            std::unique_lock<std::mutex> lock(cmd_mutex_);
+            std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        }
+        if (run_logger_) {
+            run_logger_->record_event(
+                "command_source_changed",
+                is_joy_control_.load() ? "joy" : "cmd_vel");
+        }
         RCLCPP_INFO(this->get_logger(), "Controlled by %s", is_joy_control_.load() ? "joy" : "/cmd_vel");
     }
     if (supports_interrupt() || has_motion_policy()) {
-        if (msg->buttons[kButtonLB] == 1 && msg->buttons[kButtonLB] != last_button4_) {
+        if (button_lb == 1 && button_lb != last_button4_) {
             const auto switch_while_paused = [this](auto&& switch_mode) {
                 std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
                 const bool restore_running = is_running_.exchange(false);
@@ -886,35 +1171,68 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 });
             }
         }
-        last_button4_ = msg->buttons[kButtonLB];
+        last_button4_ = button_lb;
     }
-    if (msg->buttons.size() > static_cast<size_t>(kButtonLSB)) {
-        if (msg->buttons[kButtonLSB] == 1 && msg->buttons[kButtonLSB] != last_button_lsb_) {
-            std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
-            if (!robot_->is_init_.load()) {
-                RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot enter stand mode");
-            } else {
+    if (button_lsb == 1 && button_lsb != last_button_lsb_) {
+        std::unique_lock<std::mutex> switch_lock(lb_switch_mutex_);
+        if (!robot_->is_init_.load()) {
+            RCLCPP_WARN(this->get_logger(), "Motors are not initialized, cannot enter stand mode");
+        } else {
+            try {
+                const std::vector<float> current_joint_q = robot_->sample_joint_q();
                 std::unique_lock<std::mutex> lock(mode_mutex_);
                 if (control_mode_ == ControlMode::Stand) {
-                    control_mode_ = ControlMode::Policy;
-                    stand_transition_active_ = false;
-                    is_running_.store(false);
-                    RCLCPP_INFO(this->get_logger(), "Stand mode disabled");
+                    if (!active_policy().inference_enabled || !active_policy().ctx) {
+                        RCLCPP_WARN(this->get_logger(),
+                                    "Cannot leave stand mode for disabled policy %s: %s",
+                                    active_policy().name.c_str(),
+                                    active_policy().disabled_reason.c_str());
+                    } else {
+                        start_policy_transition_locked(current_joint_q);
+                        RCLCPP_INFO(this->get_logger(),
+                                    "Stand mode disabled; policy started with %.2f s transition",
+                                    policy_transition_time_);
+                    }
                 } else {
-                    control_mode_ = ControlMode::Stand;
-                    is_interrupt_.store(false);
-                    is_motion_policy_.store(false);
-                    active_policy_idx_ = 0;
-                    start_stand_transition_locked();
-                    is_running_.store(true);
+                    lock.unlock();
+                    finish_run_log("button_lsb", "policy left for stand mode", true);
+                    lock.lock();
+                    enter_safe_stand_locked(current_joint_q);
                     RCLCPP_INFO(this->get_logger(), "Stand mode enabled");
                 }
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(this->get_logger(), "Stand mode toggle failed: %s", e.what());
             }
         }
-        last_button_lsb_ = msg->buttons[kButtonLSB];
     }
+    last_button_lsb_ = button_lsb;
+    if (button_rsb == 1 && button_rsb != last_button_rsb_) {
+        try {
+            if (is_running_.load()) {
+                finish_run_log("button_rsb", "policy stopped before default pose", true);
+                reset_runtime_state();
+                RCLCPP_INFO(this->get_logger(), "Inference paused");
+            }
+            if (!robot_->is_init_.load()) {
+                RCLCPP_WARN(this->get_logger(),
+                            "Motors are not initialized, cannot enter policy default pose");
+            } else {
+                robot_->reset_joints(joint_default_angle_);
+                sync_action_reference(robot_->sample_joint_q());
+                RCLCPP_INFO(this->get_logger(),
+                            "Policy default pose reached; press B to start inference");
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Policy default pose failed: %s", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Policy default pose failed with an unknown error");
+        }
+    }
+    last_button_rsb_ = button_rsb;
     if (has_motion_policy()) {
-        if (msg->buttons[kButtonRB] == 1 && msg->buttons[kButtonRB] != last_button5_) {
+        if (button_rb == 1 && button_rb != last_button5_) {
             std::unique_lock<std::mutex> lock(mode_mutex_);
             if (is_motion_policy_.load()) {
                 RCLCPP_WARN(this->get_logger(), "Cannot switch motion policy while in motion policy mode");
@@ -923,12 +1241,45 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
                 RCLCPP_INFO(this->get_logger(), "Selected policy: %s", policies_[motion_policy_indices_[current_motion_policy_idx_]].name.c_str());
             }
         }
-        last_button5_ = msg->buttons[kButtonRB];
+        last_button5_ = button_rb;
     }
-    last_button0_ = msg->buttons[kButtonX];
-    last_button1_ = msg->buttons[kButtonA];
-    last_button2_ = msg->buttons[kButtonB];
-    last_button3_ = msg->buttons[kButtonY];
+    last_button0_ = button_x;
+    last_button1_ = button_a;       
+    last_button2_ = button_b;
+    last_button3_ = button_y;
+}
+
+void InferenceNode::check_joy_watchdog() {
+    if (!is_joy_control_.load() || joy_timeout_sec_ == 0.0) {
+        return;
+    }
+    const int64_t last_message_ns = last_joy_message_ns_.load(std::memory_order_relaxed);
+    if (last_message_ns == 0) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const int64_t now_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    const double elapsed_sec = static_cast<double>(now_ns - last_message_ns) * 1e-9;
+    if (elapsed_sec <= joy_timeout_sec_) {
+        return;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+    if (!joy_watchdog_timed_out_.exchange(true)) {
+        if (run_logger_) {
+            run_logger_->record_event(
+                "joystick_timeout",
+                "velocity command reset after " + std::to_string(elapsed_sec) + " s");
+        }
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Joystick timeout after %.3f s; velocity command reset to zero",
+            elapsed_sec);
+    }
 }
 
 void InferenceNode::subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::Twist> msg){
@@ -955,6 +1306,12 @@ void InferenceNode::subs_elevation_callback(const std::shared_ptr<std_msgs::msg:
 void InferenceNode::subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg){
     if(supports_interrupt() && is_interrupt_.load()){
         std::unique_lock<std::mutex> lock(interrupt_mutex_);
+        if (msg->position.size() < interrupt_action_.size()) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                                 "Interrupt joint_ref_states too small: got %zu, expected %zu",
+                                 msg->position.size(), interrupt_action_.size());
+            return;
+        }
         for(size_t i = 0; i < interrupt_action_.size(); i++){
             interrupt_action_[i] = msg->position[i];
         }
@@ -974,7 +1331,8 @@ void InferenceNode::reset_joints_srv(const std::shared_ptr<std_srvs::srv::Trigge
         return;
     }
     try {
-        robot_->reset_joints(joint_default_angle_);
+        robot_->reset_joints(reset_joint_angle_);
+        sync_action_reference(robot_->sample_joint_q());
         response->success = true;
         response->message = "Joints reset successfully";
     } catch (const std::exception& e) {
@@ -1075,6 +1433,17 @@ void InferenceNode::clear_errors_srv(const std::shared_ptr<std_srvs::srv::Trigge
 
 void InferenceNode::init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                     std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    if (runtime_fault_handling_.load()) {
+        response->success = false;
+        response->message = "Runtime fault handling is still disabling motors.";
+        return;
+    }
+    std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+    if (runtime_fault_handling_.load()) {
+        response->success = false;
+        response->message = "Runtime fault handling is still disabling motors.";
+        return;
+    }
     if (robot_->is_init_.load()) {
         response->success = false;
         response->message = "Motors are already initialized, cannot init motors.";
@@ -1092,7 +1461,13 @@ void InferenceNode::init_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger
 
 void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
     try {
+        if (is_running_.load()) {
+            finish_run_log("deinit_motors_service",
+                           "motors deinitialized during policy", false);
+            reset_runtime_state();
+        }
         robot_->deinit_motors();
         response->success = true;
         response->message = "Motor deinit commands sent successfully";
@@ -1104,26 +1479,71 @@ void InferenceNode::deinit_motors_srv(const std::shared_ptr<std_srvs::srv::Trigg
 
 void InferenceNode::start_inference_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                         std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    if (is_running_.load()) {
+    std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+    if (runtime_fault_handling_.load()) {
         response->success = false;
-        response->message = "Inference is already running!";
+        response->message = "Runtime fault handling is still disabling motors.";
         return;
     }
-    is_running_.store(true);
-    response->success = true;
-    response->message = "Inference started";
+    {
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        if (control_mode_ == ControlMode::Policy && is_running_.load()) {
+            response->success = false;
+            response->message = "Inference is already running!";
+            return;
+        }
+    }
+    if (!robot_->is_init_.load()) {
+        response->success = false;
+        response->message = "Motors are not initialized";
+        return;
+    }
+    if (!active_policy().inference_enabled || !active_policy().ctx) {
+        response->success = false;
+        response->message =
+            "Active policy is disabled: " + active_policy().disabled_reason;
+        return;
+    }
+    try {
+        const std::vector<float> current_joint_q = robot_->sample_joint_q();
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        start_policy_transition_locked(current_joint_q);
+        response->success = true;
+        response->message = "Inference started with smooth transition";
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = e.what();
+    }
 }
 
 void InferenceNode::stop_inference_srv(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                                        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-    if (!is_running_.load()) {
+    {
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        if (!is_running_.load() || control_mode_ != ControlMode::Policy) {
+            response->success = false;
+            response->message = "Policy is not running";
+            return;
+        }
+    }
+    if (!robot_->is_init_.load()) {
         response->success = false;
-        response->message = "Inference is already stopped!";
+        response->message = "Motors are not initialized";
         return;
     }
-    is_running_.store(false);
-    response->success = true;
-    response->message = "Inference stopped";
+    try {
+        const std::vector<float> current_joint_q = robot_->sample_joint_q();
+        std::unique_lock<std::mutex> lock(mode_mutex_);
+        lock.unlock();
+        finish_run_log("stop_inference_service", "policy manually stopped", true);
+        lock.lock();
+        enter_safe_stand_locked(current_joint_q);
+        response->success = true;
+        response->message = "Policy stopped; safe stand hold remains active";
+    } catch (const std::exception& e) {
+        response->success = false;
+        response->message = e.what();
+    }
 }
 
 void InferenceNode::publish_joint_states() {

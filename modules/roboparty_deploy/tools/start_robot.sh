@@ -22,12 +22,13 @@ print_error() {
 }
 
 show_usage() {
-    echo "用法: $0 [--robot ROBOT] [--policy POLICY]"
+    echo "用法: $0 [--robot ROBOT] [--policy POLICY] [--build|--no-build]"
     echo "      $0 [ROBOT] [POLICY]"
     echo
-    echo "默认: robot=rpo, policy=default"
+    echo "默认: robot=rpo, policy=default, build=on"
     echo "示例: $0 --robot rpo --policy amp"
     echo "示例: $0 rpo beyondmimic"
+    echo "示例: $0 --robot rpo --policy default --no-build"
 }
 
 validate_name() {
@@ -42,6 +43,7 @@ validate_name() {
 
 ROBOT="rpo"
 POLICY="default"
+BUILD_ON_START=1
 ROBOT_SET=0
 POLICY_SET=0
 
@@ -67,6 +69,14 @@ while [ $# -gt 0 ]; do
             POLICY_SET=1
             shift 2
             ;;
+        --build)
+            BUILD_ON_START=1
+            shift
+            ;;
+        --no-build)
+            BUILD_ON_START=0
+            shift
+            ;;
         --help|-h)
             show_usage
             exit 0
@@ -91,23 +101,82 @@ done
 validate_name "robot" "$ROBOT"
 validate_name "policy" "$POLICY"
 
-# 函数：启动组件并检查（先启动ROS节点，再设置实时优先级）
+# 等待 ROS 2 发现节点，绕过可能陈旧的 daemon 缓存。
+wait_for_node() {
+    local node_name=$1
+    local timeout=${2:-15}
+    local deadline=$((SECONDS + timeout))
+
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if ros2 node list --no-daemon --spin-time 1 2>/dev/null | grep -Eq "/${node_name}$"; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    return 1
+}
+
+# 在启动 ROS 节点前验证四路电机 CAN，避免节点运行后才出现发送失败。
+check_can_interfaces() {
+    local interface
+    local details
+    local flags
+    local failed=0
+
+    if ! command -v ip &> /dev/null; then
+        print_error "未安装 ip 命令，无法检查 CAN 接口"
+        return 1
+    fi
+
+    for interface in can0 can1 can2 can3; do
+        if [ ! -d "/sys/class/net/$interface" ]; then
+            print_error "$interface 不存在"
+            failed=1
+            continue
+        fi
+
+        flags=$(cat "/sys/class/net/$interface/flags" 2>/dev/null)
+        details=$(ip -details link show "$interface" 2>/dev/null)
+        if [ -z "$flags" ] || [ $((flags & 1)) -eq 0 ]; then
+            print_error "$interface 未启动（DOWN）"
+            failed=1
+        elif ! printf '%s\n' "$details" | grep -q "bitrate 1000000"; then
+            print_error "$interface 波特率不是 1000000"
+            failed=1
+        elif printf '%s\n' "$details" | grep -q "can state BUS-OFF"; then
+            print_error "$interface 处于 BUS-OFF"
+            failed=1
+        else
+            print_success "$interface: UP, bitrate 1000000"
+        fi
+    done
+
+    if [ "$failed" -ne 0 ]; then
+        print_error "CAN 预检失败，请安装 assets/99-auto-up-devs-asus.rules 或先手动拉起四路 CAN。"
+        return 1
+    fi
+}
+
+# 函数：启动组件并等待节点被 ROS 2 发现
 start_component() {
     local session_name=$1
     local launch_cmd=$2
     local node_name=$3
-    local sleep_time=$4
+    local startup_timeout=${4:-15}
 
     print_info "启动 $session_name ..."
     # 在screen会话中启动ROS命令，并确保传递DDS配置环境变量
     screen -dmS $session_name bash -c "source install/setup.bash; export RMW_IMPLEMENTATION='$RMW_IMPLEMENTATION'; export RMW_FASTRTPS_USE_QOS_FROM_XML='$RMW_FASTRTPS_USE_QOS_FROM_XML'; export FASTRTPS_DEFAULT_PROFILES_FILE='$FASTRTPS_DEFAULT_PROFILES_FILE'; $launch_cmd; exec bash"
-    sleep $sleep_time
 
-    if ! ros2 node list | grep -q "$node_name"; then
-        print_error "$session_name 启动失败！未检测到 $node_name 节点。"
+    print_info "等待 $node_name 节点（最多 ${startup_timeout} 秒）..."
+    if ! wait_for_node "$node_name" "$startup_timeout"; then
+        print_error "$session_name 启动失败！${startup_timeout} 秒内未检测到 $node_name 节点。"
         cleanup_sessions
         exit 1
     fi
+
+    print_success "$session_name 已启动，检测到 $node_name 节点。"
 }
 
 # 函数：清理所有会话
@@ -216,6 +285,9 @@ fi
 print_info "选择机器人: $ROBOT"
 print_info "选择策略: $POLICY"
 
+print_info "检查电机 CAN 接口..."
+check_can_interfaces || exit 1
+
 # 设置 DDS 配置文件
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export RMW_FASTRTPS_USE_QOS_FROM_XML=1
@@ -265,20 +337,27 @@ if ! command -v screen &> /dev/null; then
     exit 1
 fi
 
-# 编译推理包
-print_info "编译推理包..."
-colcon build --base-paths src --symlink-install || {
-    print_error "推理包编译失败"
+# 手动运行默认编译；自启动服务使用 --no-build，避免在开机阶段改写构建产物。
+if [ "$BUILD_ON_START" -eq 1 ]; then
+    print_info "编译推理包..."
+    colcon build --base-paths src --symlink-install || {
+        print_error "推理包编译失败"
+        exit 1
+    }
+elif [ ! -f install/setup.bash ]; then
+    print_error "工作空间尚未编译，无法使用 --no-build。请先运行 colcon build。"
     exit 1
-}
+else
+    print_info "跳过编译，使用现有 install 工作空间。"
+fi
 source install/setup.bash
 
 # 停止可能正在运行的screen会话
 print_info "停止现有相关screen会话..."
 cleanup_sessions
 
-start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 5
-start_component "joy_session" "ros2 run joy joy_node" "joy_node" 2
+start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 15
+start_component "joy_session" "ros2 run joy joy_node" "joy_node" 15
 
 # 验证节点的 DDS 配置
 verify_dds_effectiveness

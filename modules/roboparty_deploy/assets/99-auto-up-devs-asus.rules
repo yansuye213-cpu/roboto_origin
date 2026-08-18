@@ -1,0 +1,11 @@
+# Match each USB-CAN adapter by serial number so USB bus renumbering does not
+# change the can0..can3 motor-bus assignment.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="can*", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="2030365139455017004E004F", NAME="can0", RUN+="/sbin/ip link set can0 type can bitrate 1000000", RUN+="/sbin/ip link set can0 txqueuelen 1000", RUN+="/sbin/ip link set can0 up"
+
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="can*", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="2030365139455018001C0031", NAME="can1", RUN+="/sbin/ip link set can1 type can bitrate 1000000", RUN+="/sbin/ip link set can1 txqueuelen 1000", RUN+="/sbin/ip link set can1 up"
+
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="can*", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="2030365139455017004F006D", NAME="can2", RUN+="/sbin/ip link set can2 type can bitrate 1000000", RUN+="/sbin/ip link set can2 txqueuelen 1000", RUN+="/sbin/ip link set can2 up"
+
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="can*", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", ATTRS{serial}=="203036513945501700500042", NAME="can3", RUN+="/sbin/ip link set can3 type can bitrate 1000000", RUN+="/sbin/ip link set can3 txqueuelen 1000", RUN+="/sbin/ip link set can3 up"
+
+SUBSYSTEM=="tty", ACTION=="add", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0666"

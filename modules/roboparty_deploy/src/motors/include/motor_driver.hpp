@@ -299,6 +299,21 @@ class MotorDriver {
      */
     virtual float get_motor_temperature() { return motor_temperature_; }
 
+    /**
+     * @brief Retrieves the power-stage temperature when the driver exposes it.
+     *
+     * Drivers without a separate MOS temperature fall back to the motor
+     * temperature so telemetry remains available through the generic interface.
+     */
+    virtual float get_motor_mos_temperature() { return motor_temperature_; }
+
+    /**
+     * @brief Retrieves the hardware torque range used by the motor protocol.
+     *
+     * A zero value means that the driver does not expose a torque range.
+     */
+    virtual float get_motor_torque_limit() { return 0.0f; }
+
    protected:
     std::shared_ptr<spdlog::logger> logger_;
     uint16_t motor_id_{0};

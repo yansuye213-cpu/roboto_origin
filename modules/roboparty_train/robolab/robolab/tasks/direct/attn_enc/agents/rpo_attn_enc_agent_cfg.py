@@ -44,9 +44,10 @@ from functools import lru_cache
 from robolab.tasks.direct.base import (  # noqa:F401
     BaseAgentCfg,
 )
+from robolab.assets.robots import RPO_ACTION_MIRROR_INDICES, RPO_ACTION_MIRROR_SIGNS, RPO_NUM_ACTIONS
 
 
-def generate_height_scan_mirror(start_idx=140, rows=11, cols=17):
+def generate_height_scan_mirror(start_idx=129, rows=11, cols=17):
     mirror_indices = []
     for row in range(rows):
         mirror_row = rows - 1 - row
@@ -57,18 +58,14 @@ def generate_height_scan_mirror(start_idx=140, rows=11, cols=17):
     return mirror_indices, mirror_signs
 
 def generate_joint_mirror(start_idx):
-    mirror_indices = []
-    mirror_indices.extend([start_idx + 1, start_idx])    
-    mirror_indices.append(start_idx + 2)
-    for i in range(start_idx + 3, start_idx + 23, 2):
-        mirror_indices.extend([i + 1, i])
-    mirror_signs = [-1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1]
+    mirror_indices = [start_idx + idx for idx in RPO_ACTION_MIRROR_INDICES]
+    mirror_signs = RPO_ACTION_MIRROR_SIGNS
     return mirror_indices, mirror_signs
 
 map_scan_mirror_indices, map_scan_mirror_signs = generate_height_scan_mirror(0, 11, 17)
 joint_pos_mirror_indices, joint_pos_mirror_signs = generate_joint_mirror(9)
-joint_vel_mirror_indices, joint_vel_mirror_signs = generate_joint_mirror(32)
-action_mirror_indices, action_mirror_signs = generate_joint_mirror(55)
+joint_vel_mirror_indices, joint_vel_mirror_signs = generate_joint_mirror(9 + RPO_NUM_ACTIONS)
+action_mirror_indices, action_mirror_signs = generate_joint_mirror(9 + RPO_NUM_ACTIONS * 2)
 policy_obs_mirror_indices = [0, 1, 2,\
                              3, 4, 5,\
                              6, 7, 8]\
@@ -76,16 +73,16 @@ policy_obs_mirror_indices = [0, 1, 2,\
 policy_obs_mirror_signs = [-1, 1, -1,\
                            1, -1, 1,\
                            1, -1, -1] + joint_pos_mirror_signs + joint_vel_mirror_signs + action_mirror_signs
-joint_acc_mirror_indices, joint_acc_mirror_signs = generate_joint_mirror(93)
-joint_torques_mirror_indices, joint_torques_mirror_signs = generate_joint_mirror(116)
+joint_acc_mirror_indices, joint_acc_mirror_signs = generate_joint_mirror(87)
+joint_torques_mirror_indices, joint_torques_mirror_signs = generate_joint_mirror(108)
 critic_obs_mirror_indices = policy_obs_mirror_indices +\
-                            [78, 79, 80,\
-                             82, 81,\
-                             86, 87, 88, 83, 84, 85,\
-                             90, 89,\
-                             92, 91]\
+                            [72, 73, 74,\
+                             76, 75,\
+                             80, 81, 82, 77, 78, 79,\
+                             84, 83,\
+                             86, 85]\
                             + joint_acc_mirror_indices + joint_torques_mirror_indices +\
-                            [142, 143, 144, 139, 140, 141]
+                            [132, 133, 134, 129, 130, 131]
 critic_obs_mirror_signs = policy_obs_mirror_signs +\
                            [1, -1, 1,\
                             1, 1,\
@@ -94,18 +91,18 @@ critic_obs_mirror_signs = policy_obs_mirror_signs +\
                             1, 1]\
                             + joint_acc_mirror_signs + joint_torques_mirror_signs +\
                             [1, -1, 1, 1, -1, 1]
-act_mirror_indices = [1, 0, 2, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15, 18, 17, 20, 19, 22, 21]
-act_mirror_signs = [-1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1]
+act_mirror_indices = RPO_ACTION_MIRROR_INDICES
+act_mirror_signs = RPO_ACTION_MIRROR_SIGNS
 policy_obs_mirror_indices_expanded = []
 for i in range(5):
-    offset = i * 78
+    offset = i * 72
     for idx in policy_obs_mirror_indices:
         policy_obs_mirror_indices_expanded.append(idx + offset)
 policy_obs_mirror_signs_expanded = policy_obs_mirror_signs * 5
 
 critic_obs_mirror_indices_expanded = []
 for i in range(5):
-    offset = i * 145
+    offset = i * 135
     for idx in critic_obs_mirror_indices:
         critic_obs_mirror_indices_expanded.append(idx + offset)
 critic_obs_mirror_signs_expanded = critic_obs_mirror_signs * 5
@@ -179,7 +176,7 @@ class RslRlPpoEncActorCriticCfg(RslRlPpoActorCriticCfg):
     actor_history_length:int = 5
     critic_history_length:int = 1
     enable_critic_estimation:bool = False
-    estimation_slice:list = [78, 79, 80]
+    estimation_slice:list = [72, 73, 74]
     estimaiton_hidden_dims:list = [256, 64]
     enable_obs_encoder:bool = False
     obs_encoder_hidden_dims:list = [256, 64]
@@ -218,7 +215,7 @@ class RPOAttnEncAgentCfg(BaseAgentCfg):
             actor_history_length=5,
             critic_history_length=5,
             enable_critic_estimation=True,
-            estimation_slice=[78, 79, 80],
+            estimation_slice=[72, 73, 74],
             estimaiton_hidden_dims=[256, 64],
             enable_obs_encoder=True,
             latent_dim=32,

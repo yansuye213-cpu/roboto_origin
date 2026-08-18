@@ -44,37 +44,34 @@ from functools import lru_cache
 from robolab.tasks.direct.base import (  # noqa:F401
     BaseAgentCfg,
 )
+from robolab.assets.robots import RPO_ACTION_MIRROR_INDICES, RPO_ACTION_MIRROR_SIGNS, RPO_NUM_ACTIONS
 
 
 def generate_joint_mirror(start_idx):
-    mirror_indices = []
-    mirror_indices.extend([start_idx + 1, start_idx])    
-    mirror_indices.append(start_idx + 2)
-    for i in range(start_idx + 3, start_idx + 23, 2):
-        mirror_indices.extend([i + 1, i])
-    mirror_signs = [-1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1]
+    mirror_indices = [start_idx + idx for idx in RPO_ACTION_MIRROR_INDICES]
+    mirror_signs = RPO_ACTION_MIRROR_SIGNS
     return mirror_indices, mirror_signs
 
 joint_pos_mirror_indices, joint_pos_mirror_signs = generate_joint_mirror(9)
-joint_vel_mirror_indices, joint_vel_mirror_signs = generate_joint_mirror(32)
-action_mirror_indices, action_mirror_signs = generate_joint_mirror(55)
+joint_vel_mirror_indices, joint_vel_mirror_signs = generate_joint_mirror(9 + RPO_NUM_ACTIONS)
+action_mirror_indices, action_mirror_signs = generate_joint_mirror(9 + RPO_NUM_ACTIONS * 2)
 policy_obs_mirror_indices = [0, 1, 2,\
                              3, 4, 5,\
                              6, 7, 8]\
                             + joint_pos_mirror_indices + joint_vel_mirror_indices + action_mirror_indices\
-                            + [78]
+                            + [72]
 policy_obs_mirror_signs = [-1, 1, -1,\
                            1, -1, 1,\
                            1, -1, -1] + joint_pos_mirror_signs + joint_vel_mirror_signs + action_mirror_signs\
                            + [1]
-joint_acc_mirror_indices, joint_acc_mirror_signs = generate_joint_mirror(94)
-joint_torques_mirror_indices, joint_torques_mirror_signs = generate_joint_mirror(117)
+joint_acc_mirror_indices, joint_acc_mirror_signs = generate_joint_mirror(88)
+joint_torques_mirror_indices, joint_torques_mirror_signs = generate_joint_mirror(109)
 critic_obs_mirror_indices = policy_obs_mirror_indices +\
-                            [79, 80, 81,\
-                             83, 82,\
-                             87, 88, 89, 84, 85, 86,\
-                             91, 90,\
-                             93, 92]\
+                            [73, 74, 75,\
+                             77, 76,\
+                             81, 82, 83, 78, 79, 80,\
+                             85, 84,\
+                             87, 86]\
                             + joint_acc_mirror_indices + joint_torques_mirror_indices
 critic_obs_mirror_signs = policy_obs_mirror_signs +\
                            [1, -1, 1,\
@@ -83,18 +80,18 @@ critic_obs_mirror_signs = policy_obs_mirror_signs +\
                             1, 1,\
                             1, 1]\
                             + joint_acc_mirror_signs + joint_torques_mirror_signs
-act_mirror_indices = [1, 0, 2, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15, 18, 17, 20, 19, 22, 21]
-act_mirror_signs = [-1, -1, -1, -1, -1, 1, 1, 1, 1, -1, -1, 1, 1, -1, -1, 1, 1, 1, 1, -1, -1, -1, -1]
+act_mirror_indices = RPO_ACTION_MIRROR_INDICES
+act_mirror_signs = RPO_ACTION_MIRROR_SIGNS
 policy_obs_mirror_indices_expanded = []
 for i in range(10):
-    offset = i * 79
+    offset = i * 73
     for idx in policy_obs_mirror_indices:
         policy_obs_mirror_indices_expanded.append(idx + offset)
 policy_obs_mirror_signs_expanded = policy_obs_mirror_signs * 10
 
 critic_obs_mirror_indices_expanded = []
 for i in range(10):
-    offset = i * 140
+    offset = i * 130
     for idx in critic_obs_mirror_indices:
         critic_obs_mirror_indices_expanded.append(idx + offset)
 critic_obs_mirror_signs_expanded = critic_obs_mirror_signs * 10

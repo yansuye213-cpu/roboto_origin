@@ -8,21 +8,35 @@ import robot_py
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+JOINT_NUM = 21
+JOINT_DEFAULT_ANGLE = np.array([
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0,
+    -0.14782176911830902, 0.39768826961517334, 0.04596780240535736, -0.012397955171763897,
+    -0.032616160809993744, -0.5540932416915894, 0.00667582219466567, -0.09136339277029037,
+])
+USD2URDF = [0, 6, 12, 1, 7, 13, 17, 2, 8, 14, 18, 3, 9, 15, 19, 4, 10, 16, 20, 5, 11]
+
 class MotionLoader:
     def __init__(self, motion_file: str, logger, usd2urdf: bool = False):
         try:
             data = np.load(motion_file)
-            self.joint_default_angle = np.array([0.0, 0.0, -0.1, 0.3, -0.2, 0.0, 0.0, 0.0, -0.1, 0.3, -0.2, 0.0, 0.0, 0.18, 0.06, 0.0, 0.78, 0.0, 0.18, -0.06, 0.0, 0.78, 0.0])
             self.fps = int(data['fps'].item())
             pos_usd = data['joint_pos']
             vel_usd = data['joint_vel']
+            if pos_usd.shape[1] != JOINT_NUM or vel_usd.shape[1] != JOINT_NUM:
+                raise RuntimeError(
+                    f"Motion file must contain {JOINT_NUM} joints, got "
+                    f"joint_pos={pos_usd.shape[1]}, joint_vel={vel_usd.shape[1]}"
+                )
+            self.joint_default_angle = JOINT_DEFAULT_ANGLE.copy()
             self.joint_pos = pos_usd.copy()
             self.joint_vel = vel_usd.copy()
             if usd2urdf:
                 logger.info("Converting joint order from USD to URDF")
-                joint_map = [0, 6, 12, 1, 7, 13, 18, 2, 8, 14, 19, 3, 9, 15, 20, 4, 10, 16, 21, 5, 11, 17, 22]
-                self.joint_pos[:, joint_map] = pos_usd
-                self.joint_vel[:, joint_map] = vel_usd
+                self.joint_pos[:, USD2URDF] = pos_usd
+                self.joint_vel[:, USD2URDF] = vel_usd
             self.joint_pos -= self.joint_default_angle
             
             self.num_frames = self.joint_pos.shape[0]

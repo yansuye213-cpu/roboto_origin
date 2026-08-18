@@ -348,9 +348,15 @@ def stand_still_interrupt(
 
 def action_penalty_interrupt(env: BaseEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Penalize action magnitude during interruption."""
+    action_joint_ids = getattr(env, "action_joint_ids", None)
+    if isinstance(asset_cfg.joint_ids, slice) or action_joint_ids is None:
+        action_ids = asset_cfg.joint_ids
+    else:
+        action_index_by_joint_id = {int(joint_id): action_id for action_id, joint_id in enumerate(action_joint_ids)}
+        action_ids = [action_index_by_joint_id[int(joint_id)] for joint_id in asset_cfg.joint_ids]
     reward = torch.sum(
         torch.square(
-            env.action_buffer.buffer[:, -1, asset_cfg.joint_ids]
+            env.action_buffer.buffer[:, -1, action_ids]
         ),
         dim=1,
     )

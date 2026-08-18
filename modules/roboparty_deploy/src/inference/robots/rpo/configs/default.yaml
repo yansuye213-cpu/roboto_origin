@@ -2,7 +2,7 @@ inference_node:
     ros__parameters:
         model_names: ["policy.onnx"]
         obs_layouts:
-          - "ang_vel:3, gravity_b:3, cmd_vel:3, dof_pos:23, dof_vel:23, last_action:23"
+          - "ang_vel:3, gravity_b:3, cmd_vel:3, dof_pos:21, dof_vel:21, last_action:21"
         frame_stacks: [10]
         obs_stack_orders: ["frame_major"]
         act_alpha: 1.0
@@ -10,6 +10,9 @@ inference_node:
         decimation: 5
         intra_threads: 1
         dt: 0.004
+        # One CSV per B -> RSB policy run. Relative paths use the deploy module root.
+        run_log_enabled: true
+        run_log_directory: "runtime_logs"
         obs_scales_lin_vel: 1.0
         obs_scales_ang_vel: 1.0
         obs_scales_dof_pos: 1.0
@@ -18,25 +21,48 @@ inference_node:
         clip_observations: 100.0
         action_scale: 0.25
         clip_actions: 100.0
-        usd2urdf: [0, 6, 12, 1, 7, 13, 17, 2, 8, 14, 18, 3, 9, 15, 19, 4, 10, 16, 20, 5, 11]
+        usd2urdf: [12, 0, 13, 6, 17, 1, 14, 7, 18, 2, 15, 8, 19, 3, 16, 9, 20, 4, 10, 5, 11]
         clip_cmd: 
-            [-0.4, 0.6,
-             -0.4, 0.4,
-             -0.8, 0.8]
+            [-1.0, 1.0,
+             -1.0, 1.0,
+             -1.0, 1.0]
+        joy_timeout_sec: 0.5
+        # Right-stick linear speed mapping: deadzone, then 0.5/0.7/1.0 m/s.
+        joy_linear_axis_deadzone: 0.1
+        joy_linear_axis_thresholds: [0.5, 0.7]
+        joy_linear_speed_levels: [0.5, 0.7, 1.0]
         joint_default_angle:
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-             0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            [-0.15, 0.0, 0.0, 0.25, -0.1, 0.0,
+             -0.15, 0.0, 0.0, 0.25, -0.1, 0.0,
              0.0,
-             -0.14782176911830902, 0.39768826961517334, 0.04596780240535736, -0.012397955171763897,
-             -0.032616160809993744, -0.5540932416915894, 0.00667582219466567, -0.09136339277029037]
+             -0.18, 0.25, 0.0, -0.3,
+             -0.18, -0.25, 0.0, -0.3]
+        # Policy/Isaac order. All policy joint directions now match the real-robot URDF.
+        policy_joint_signs:
+            [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+             1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+             1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+        # Keep commanded targets inside the measured mechanical limits to absorb tracking overshoot.
+        policy_joint_limit_margin: 0.01
+        # Feedback beyond this tolerance gets a stronger terminal warning only.
+        # Feedback limit violations never stop inference or disable motors.
+        joint_limit_check_tolerance: 0.005
+        # Real-robot URDF order; reset_joints converts these targets with motor_sign.
+        reset_joint_angle:
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+             0.0, 0.0, 0.0, 0.061608, 0.0, 0.0,
+             0.0,
+             0.08106355369091034, 0.41, 0.02841992862522602, -0.07763027399778366,
+             -0.025749599561095238, -0.42, 0.00019073777366429567, -0.06198977679014206]
         stand_joint_angle:
             [0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
-             0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+             0.0000, 0.0000, 0.0000, 0.061608, 0.0000, 0.0000,
              0.0000,
-             0.0000, 0.0000, 0.0000, 0.0000,
-             0.0000, 0.0000, 0.0000, 0.0000]
-        stand_transition_time: 1.5
-        stand_whole_body_model_path: "src/urdf/Loobot614.urdf"
+             0.18, 0.06, 0.0, -0.78,
+             0.18, -0.06, 0.0, -0.78]
+        stand_transition_time: 0.5
+        policy_transition_time: 0.5
+        stand_whole_body_model_path: "description/urdf/Loobot722.urdf"
         stand_whole_body_base_link: "base_link"
         stand_whole_body_left_foot_link: "left_ankle_roll_link"
         stand_whole_body_right_foot_link: "right_ankle_roll_link"
@@ -51,22 +77,22 @@ inference_node:
              "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
              "right_shoulder_yaw_joint", "right_elbow_pitch_joint"]
         stand_validate_whole_body_model: true
-        stand_wbc_mpc_enabled: true
-        stand_wbc_mpc_backend: "ocs2"
-        stand_wbc_mpc_mrt_enabled: false
-        stand_wbc_mpc_mrt_first_solve_blocking: true
-        stand_wbc_mpc_mrt_max_policy_age: 0.08
+        stand_wbc_mpc_enabled: false
+        stand_wbc_mpc_backend: disabled
+        stand_wbc_mpc_mrt_enabled: true
+        stand_wbc_mpc_mrt_first_solve_blocking: false
+        stand_wbc_mpc_mrt_max_policy_age: 0.2000
         stand_wbc_mpc_horizon: 60
         stand_wbc_mpc_dt: 0.012
-        stand_wbc_target_roll: 0.0
-        stand_wbc_target_pitch: 0.085
-        stand_wbc_mpc_orientation_weight: 120.0
-        stand_wbc_mpc_angular_rate_weight: 1.4
-        stand_wbc_mpc_com_weight: 30.0
-        stand_wbc_mpc_com_velocity_weight: 4.0
+        stand_wbc_target_roll: 0.0000
+        stand_wbc_target_pitch: 0.0400
+        stand_wbc_mpc_orientation_weight: 80.0000
+        stand_wbc_mpc_angular_rate_weight: 1.2000
+        stand_wbc_mpc_com_weight: 20.0000
+        stand_wbc_mpc_com_velocity_weight: 3.0000
         stand_wbc_mpc_terminal_weight_scale: 4.0
-        stand_wbc_mpc_input_smooth_weight: 0.02
-        stand_wbc_mpc_force_weight: 0.030
+        stand_wbc_mpc_input_smooth_weight: 8.0000
+        stand_wbc_mpc_force_weight: 0.3000
         stand_wbc_mpc_qp_iterations: 6
         stand_wbc_mpc_terminal_cost_enabled: true
         stand_wbc_mpc_input_smoothing_enabled: true
@@ -82,17 +108,29 @@ inference_node:
         stand_wbc_mpc_friction_barrier_mu: 0.1
         stand_wbc_mpc_friction_barrier_delta: 5.0
         stand_wbc_mpc_friction_regularization: 25.0
-        stand_wbc_mpc_max_angular_accel: 12.0
-        stand_wbc_mpc_max_com_accel: 2.0
-        stand_wbc_mpc_max_contact_force_delta: 50.0
+        stand_wbc_mpc_max_angular_accel: 2.0000
+        stand_wbc_mpc_max_com_accel: 1.0000
+        stand_wbc_mpc_max_contact_force_delta: 10.0000
+        stand_wbc_mpc_output_roll_sign: 1.0000
+        stand_wbc_mpc_output_pitch_sign: -1.0000
+        stand_wbc_mpc_output_roll_scale: 0.0000
+        stand_wbc_mpc_output_pitch_scale: 1.0000
         stand_wbc_mpc_base_height_weight: 5.0
         stand_wbc_mpc_yaw_weight: 1.0
-        stand_wbc_mpc_joint_angle_weight: 0.5
-        stand_wbc_mpc_joint_velocity_weight: 0.02
+        stand_wbc_mpc_joint_angle_weight: 0.0000
+        stand_wbc_mpc_joint_velocity_weight: 0.2000
         stand_wbc_mpc_swing_position_weight: 10.0
         stand_wbc_mpc_joint_command_enabled: false
-        stand_wbc_mpc_joint_command_position_gain: 0.25
-        stand_wbc_mpc_joint_command_velocity_scale: 1.0
+        stand_wbc_mpc_joint_command_position_gain: 0.0200
+        stand_wbc_mpc_joint_command_velocity_scale: 0.1000
+        stand_wbc_mpc_joint_command_max_delta: 0.000250
+        stand_wbc_mpc_joint_command_max_velocity: 0.1500
+        stand_wbc_mpc_joint_command_joint_scale:
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+             1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+             0.0,
+             0.0, 0.0, 0.0, 0.0,
+             0.0, 0.0, 0.0, 0.0]
         stand_wbc_mpc_swing_time_scale: 0.15
         stand_wbc_mpc_swing_lift_off_velocity: 0.0
         stand_wbc_mpc_swing_touch_down_velocity: 0.0
@@ -108,29 +146,31 @@ inference_node:
         stand_wbc_floating_base_eom_enabled: true
         stand_wbc_stance_contact_constraint_enabled: true
         stand_wbc_friction_constraint_enabled: true
-        stand_wbc_torque_limit_constraint_enabled: true
+        stand_wbc_torque_limit_constraint_enabled: false
         stand_wbc_base_accel_task_enabled: true
         stand_wbc_contact_force_task_enabled: true
         stand_wbc_swing_task_enabled: true
         stand_wbc_qddot_regularization_enabled: true
         stand_wbc_tau_regularization_enabled: true
-        stand_wbc_enable_torque: false
+        stand_wbc_enable_torque: true
         stand_wbc_qp_iterations: 24
-        stand_wbc_active_set_iterations: 80
+        stand_wbc_active_set_iterations: 8
         stand_wbc_friction_coefficient: 0.45
         stand_wbc_min_normal_force: 0.0
-        stand_wbc_max_normal_force: 420.0
+        stand_wbc_max_normal_force: 420.0000
         stand_wbc_force_tracking_weight: 0.2000
-        stand_wbc_moment_tracking_weight: 50.0000
+        stand_wbc_moment_tracking_weight: 30.0000
         stand_wbc_regularization_weight: 0.0001
         stand_wbc_smooth_weight: 0.02
-        stand_wbc_max_body_moment: 8.0
-        stand_wbc_max_joint_torque: 0.2000
+        stand_wbc_max_body_moment: 1.0000
+        stand_wbc_body_moment_rate_limit: 1.0000
+        stand_wbc_body_moment_filter_weight: 4.0000
+        stand_wbc_max_joint_torque: 0.3000
         stand_wbc_foot_half_length: 0.065
         stand_wbc_foot_half_width: 0.035
         stand_wbc_foot_center_x: 0.060
         stand_wbc_foot_contact_z: -0.040
-        stand_wbc_virtual_foot_corners_enabled: true
+        stand_wbc_virtual_foot_corners_enabled: false
         stand_wbc_step_recovery_enabled: false
         stand_wbc_step_placement_enabled: true
         stand_wbc_step_recovery_roll_trigger: 0.24
@@ -178,43 +218,43 @@ inference_node:
         stand_wbc_swing_max_joint_delta: 0.25
         stand_wbc_swing_max_joint_velocity: 2.0
         stand_wbc_torque_joint_scale:
-            [1.0, 1.0, 0.3, 1.0, 0.0, 0.0,
-             1.0, 1.0, 0.3, 1.0, 0.0, 0.0,
-             0.0,
-             0.0, 0.0, 0.0, 0.0,
-             0.0, 0.0, 0.0, 0.0]
+            [1.0000, 1.0000, 0.3000, 1.0000, 0.0500, 0.0000,
+             1.0000, 1.0000, 0.3000, 1.0000, 0.0500, 0.0000,
+             0.0000,
+             0.0000, 0.0000, 0.0000, 0.0000,
+             0.0000, 0.0000, 0.0000, 0.0000]
         stand_kp:
-            [100.0, 100.0, 100.0, 100.0, 80.0, 60.0,
-             100.0, 100.0, 100.0, 100.0, 80.0, 60.0, 
+            [100.0, 100.0, 100.0, 100.0, 90.0, 90.0,
+             100.0, 100.0, 100.0, 100.0, 90.0, 90.0,
              30.0,
              40.0, 40.0, 40.0, 30.0,
              40.0, 40.0, 40.0, 30.0]
         stand_kd:
-            [3.3, 3.3, 4.2, 4.2, 4.0, 2.5,
-             3.3, 3.3, 4.2, 4.2, 4.0, 2.5,
+            [3.3, 3.3, 4.2, 4.2, 3.3, 3.3,
+             3.3, 3.3, 4.2, 4.2, 3.3, 3.3,
              1.5,
              2.0, 2.0, 2.0, 1.5,
              2.0, 2.0, 2.0, 1.5]
         joint_limits: 
-            [-1.0, 0.6,
-             -0.6, 1.0,
-             -1.57, 1.57,
-             -0.2, 2.5,
-             -0.6, 0.6,
-             -0.5, 0.5,
-             -0.6, 1.0,
-             -1.0, 0.6,
-             -1.57, 1.57,
-             -0.2, 2.5,
-             -0.6, 0.6,
-             -0.5, 0.5,
-             -3.14, 3.14,
-             -3.14, 1.57,
-             -0.25, 3.14,
-             -1.57, 1.57,
-             -0.6, 1.57,
-             -3.14, 1.57,
-             -3.14, 0.25,
-             -1.57, 1.57,
-             -0.6, 1.57]
+            [-1.445220, 0.493057,
+             -0.382429, 0.689517,
+             -0.852707, 0.862707,
+             -0.171092, 1.855307,
+             -0.377162, 0.357987,
+             -0.589145, 0.520970,
+             -1.444076, 0.485809,
+             -0.700198, 0.382048,
+             -0.858130, 0.869574,
+              0.0, 1.811818,
+             -0.450025, 0.372177,
+             -0.520970, 0.890271,
+             -1.510834, 1.630999,
+             -2.984856, 1.637865,
+              0.0, 2.176890,
+             -1.550889, 1.605822,
+             -1.576829, 0.0,
+             -3.385023, 1.647783,
+             -2.210078, 0.0,
+             -1.594759, 1.635576,
+             -1.584840, 0.0]
         gravity_z_upper: -0.5

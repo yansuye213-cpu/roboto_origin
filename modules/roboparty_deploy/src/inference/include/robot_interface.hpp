@@ -22,6 +22,30 @@
 
 class RobotInterface {
    public:
+    struct TelemetrySnapshot {
+        std::vector<float> joint_q;
+        std::vector<float> joint_vel;
+        std::vector<float> joint_target;
+        std::vector<float> feedback_tau;
+        std::vector<float> demand_tau;
+        std::vector<float> hardware_tau_limit;
+        std::vector<float> motor_temperature;
+        std::vector<float> mos_temperature;
+        std::vector<uint8_t> error_code;
+
+        void resize(size_t joint_count) {
+            joint_q.resize(joint_count);
+            joint_vel.resize(joint_count);
+            joint_target.resize(joint_count);
+            feedback_tau.resize(joint_count);
+            demand_tau.resize(joint_count);
+            hardware_tau_limit.resize(joint_count);
+            motor_temperature.resize(joint_count);
+            mos_temperature.resize(joint_count);
+            error_code.resize(joint_count);
+        }
+    };
+
     RobotInterface(const std::string& config_file);
     ~RobotInterface() {
         deinit_motors();
@@ -56,6 +80,9 @@ class RobotInterface {
     void set_zeros();
     void clear_errors();
     void refresh_joints();
+    std::vector<float> sample_joint_q();
+    void sample_telemetry(TelemetrySnapshot& snapshot);
+    std::string joint_motor_label(size_t joint_idx) const;
     std::vector<float> get_joint_q() {
         if (!is_init_.load()) {
             throw std::runtime_error("Motors not initialized");

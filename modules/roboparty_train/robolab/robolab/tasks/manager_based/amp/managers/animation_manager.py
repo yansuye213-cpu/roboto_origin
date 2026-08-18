@@ -63,6 +63,16 @@ class AnimationTerm(ManagerTermBase):
         
         # Get motion data term
         self.motion_data_term: MotionDataTerm = env.motion_data_manager.get_term(cfg.motion_data_term)
+        self.joint_ids = None
+        if cfg.joint_names is not None:
+            joint_ids, joint_names = env.scene["robot"].find_joints(cfg.joint_names, preserve_order=True)
+            if list(joint_names) != cfg.joint_names:
+                raise RuntimeError(
+                    "Animation joints do not match the configured order.\n"
+                    f"Expected: {cfg.joint_names}\n"
+                    f"Actual:   {joint_names}"
+                )
+            self.joint_ids = list(joint_ids)
         
         # create buffers
         self.num_steps = len(self.step_indices)
@@ -198,7 +208,10 @@ class AnimationTerm(ManagerTermBase):
         robot_anim.write_root_state_to_sim(root_states)
         
         joint_pos = robot_anim.data.default_joint_pos.clone()
-        joint_pos[:, :] = dof_pos
+        if self.joint_ids is None:
+            joint_pos[:, :] = dof_pos
+        else:
+            joint_pos[:, self.joint_ids] = dof_pos
         joint_vel = torch.zeros_like(robot_anim.data.default_joint_vel)
         robot_anim.write_joint_state_to_sim(joint_pos, joint_vel)
             
@@ -354,7 +367,6 @@ class AnimationManager(ManagerBase):
             # add class to dict
             self._terms[term_name] = term
             self._term_cfgs[term_name] = term_cfg
-
 
 
 

@@ -51,10 +51,14 @@ void InferenceNode::update_stacked_obs(std::vector<float>& input_buffer, const s
     }
 }
 
-void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string model_path, int input_size){
+bool InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx,
+                                std::string model_path,
+                                int input_size,
+                                std::string& disabled_reason) {
     if (!ctx) {
         ctx = std::make_unique<ModelContext>();
     }
+    disabled_reason.clear();
 
     Ort::SessionOptions session_options;
     session_options.DisablePerSessionThreads();
@@ -83,9 +87,12 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         model_input_size *= static_cast<size_t>(ctx->input_shape[i]);
     }
     if (model_input_size != static_cast<size_t>(input_size)) {
-        throw std::runtime_error(
-            "ONNX input size mismatch for " + model_path + ": model expects " +
-            std::to_string(model_input_size) + " values, but config provides " + std::to_string(input_size));
+        disabled_reason =
+            "ONNX input size mismatch: model expects " +
+            std::to_string(model_input_size) + " values, config provides " +
+            std::to_string(input_size);
+        ctx.reset();
+        return false;
     }
     ctx->input_buffer.resize(input_size);
 
@@ -113,11 +120,13 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         }
         model_output_size *= static_cast<size_t>(ctx->output_shape[i]);
     }
-    if (usd2urdf_.size() > model_output_size) {
-        throw std::runtime_error(
-            "ONNX output size mismatch for " + model_path + ": model provides " +
-            std::to_string(model_output_size) + " actions, but usd2urdf maps " +
-            std::to_string(usd2urdf_.size()) + " actions");
+    if (model_output_size != usd2urdf_.size()) {
+        disabled_reason =
+            "ONNX output size mismatch: model provides " +
+            std::to_string(model_output_size) + " actions, usd2urdf maps " +
+            std::to_string(usd2urdf_.size()) + " actions";
+        ctx.reset();
+        return false;
     }
     ctx->output_buffer.resize(model_output_size);
 
@@ -137,6 +146,7 @@ void InferenceNode::setup_model(std::unique_ptr<ModelContext>& ctx, std::string 
         
     ctx->output_tensor = std::make_unique<Ort::Value>(Ort::Value::CreateTensor<float>(
         *ctx->memory_info, ctx->output_buffer.data(), ctx->output_buffer.size(), ctx->output_shape.data(), ctx->output_shape.size()));
+    return true;
 }
 
 void InferenceNode::reset_runtime_state() {
@@ -149,6 +159,9 @@ void InferenceNode::reset_runtime_state() {
         control_mode_ = ControlMode::Policy;
         stand_transition_elapsed_ = 0.0f;
         stand_transition_active_ = false;
+        policy_transition_elapsed_ = 0.0f;
+        policy_transition_active_ = false;
+        policy_transition_target_ready_ = false;
     }
     {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
@@ -163,6 +176,8 @@ void InferenceNode::reset_runtime_state() {
         for (int i = 0; i < joint_num_; i++) {
             act_[i] = static_cast<float>(joint_default_angle_[i]);
             last_act_[i] = static_cast<float>(joint_default_angle_[i]);
+            policy_filtered_action_[i] = static_cast<float>(joint_default_angle_[i]);
+            policy_transition_offset_[i] = 0.0f;
         }
     }
     if (supports_interrupt()) {
@@ -206,9 +221,13 @@ void InferenceNode::initialize_runtime_state() {
     act_.assign(joint_num_, 0.0f);
     last_act_.assign(joint_num_, 0.0f);
     stand_start_action_.assign(joint_num_, 0.0f);
+    policy_start_action_.assign(joint_num_, 0.0f);
+    policy_transition_offset_.assign(joint_num_, 0.0f);
+    policy_filtered_action_.assign(joint_num_, 0.0f);
     joint_pos_buffer_.assign(joint_num_, 0.0f);
     joint_vel_buffer_.assign(joint_num_, 0.0f);
     joint_torques_buffer_.assign(joint_num_, 0.0f);
+    joint_limit_violation_active_.assign(joint_num_, false);
     quat_buffer_.assign(4, 0.0f);
     ang_vel_buffer_.assign(3, 0.0f);
     if (has_obs_source("perception")) {
@@ -217,7 +236,7 @@ void InferenceNode::initialize_runtime_state() {
         perception_obs_buffer_.clear();
     }
     if (has_obs_source("interrupt")) {
-        interrupt_action_.assign(10, 0.0f);
+        interrupt_action_.assign(interrupt_action_size_, 0.0f);
     } else {
         interrupt_action_.clear();
     }
@@ -247,6 +266,140 @@ void InferenceNode::reset_policy_runtime(PolicyRuntime& policy) {
     policy.is_first_frame = true;
 }
 
+void InferenceNode::start_run_log() {
+    if (!run_logger_ || run_logger_->active()) {
+        return;
+    }
+    std::string error_message;
+    if (!run_logger_->start(active_policy().name, error_message)) {
+        RCLCPP_ERROR(this->get_logger(), "Failed to start policy CSV log: %s",
+                     error_message.c_str());
+        return;
+    }
+    RCLCPP_INFO(this->get_logger(), "Policy CSV log started: %s",
+                std::filesystem::absolute(run_logger_->current_path()).c_str());
+}
+
+void InferenceNode::finish_run_log(const std::string& reason,
+                                   const std::string& detail,
+                                   bool clean_exit) {
+    if (!run_logger_ || !run_logger_->active()) {
+        return;
+    }
+    run_logger_->finish(reason, detail, clean_exit);
+    RCLCPP_INFO(this->get_logger(), "Policy CSV log finished: %s", reason.c_str());
+}
+
+void InferenceNode::handle_runtime_fault(const std::string& source,
+                                         const std::string& detail) noexcept {
+    bool expected = false;
+    if (!runtime_fault_handling_.compare_exchange_strong(expected, true)) {
+        return;
+    }
+
+    // Stop producing commands before touching motor state. The node and its
+    // worker threads remain alive so the operator can initialize and retry.
+    is_running_.store(false);
+    const bool motors_were_initialized =
+        robot_ && robot_->is_init_.exchange(false);
+    {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+
+    if (run_logger_ && run_logger_->active()) {
+        try {
+            run_logger_->record_event("runtime_fault", source + ": " + detail);
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Failed to enqueue runtime fault event");
+        }
+    }
+
+    std::string final_detail = detail;
+    try {
+        std::lock_guard<std::mutex> lifecycle_lock(motor_lifecycle_mutex_);
+        // A start request that was already in progress may have raced with the
+        // first store. Reassert the stopped state while lifecycle operations
+        // are serialized, then send the hardware disable commands.
+        is_running_.store(false);
+        const bool motors_initialized_after_lock =
+            robot_ && robot_->is_init_.exchange(false);
+        if (robot_ &&
+            (motors_were_initialized || motors_initialized_after_lock)) {
+            robot_->deinit_motors();
+        }
+    } catch (const std::exception& e) {
+        final_detail += "; motor deinit failed: ";
+        final_detail += e.what();
+        RCLCPP_ERROR(this->get_logger(),
+                     "Motor deinitialization after runtime fault failed: %s",
+                     e.what());
+    } catch (...) {
+        final_detail += "; motor deinit failed with an unknown error";
+        RCLCPP_ERROR(this->get_logger(),
+                     "Motor deinitialization after runtime fault failed with "
+                     "an unknown error");
+    }
+
+    try {
+        finish_run_log(source, final_detail, false);
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Failed to finalize policy CSV after runtime fault: %s",
+                     e.what());
+    } catch (...) {
+        RCLCPP_ERROR(this->get_logger(),
+                     "Failed to finalize policy CSV after runtime fault");
+    }
+
+    RCLCPP_ERROR(this->get_logger(),
+                 "Runtime fault handled without stopping the node: %s: %s. "
+                 "Motors are disabled; initialize and prepare the robot before retrying.",
+                 source.c_str(), final_detail.c_str());
+    runtime_fault_handling_.store(false);
+}
+
+void InferenceNode::record_policy_sample(size_t clamped_joint_count) {
+    if (!run_logger_ || !run_logger_->active()) {
+        return;
+    }
+
+    PolicyLogContext context;
+    {
+        std::lock_guard<std::mutex> lock(cmd_mutex_);
+        context.cmd_vx = cmd_vel_[0];
+        context.cmd_vy = cmd_vel_[1];
+        context.cmd_yaw = cmd_vel_[2];
+    }
+    if (quat_buffer_.size() == 4) {
+        Eigen::Quaternionf q(quat_buffer_[0], quat_buffer_[1],
+                             quat_buffer_[2], quat_buffer_[3]);
+        if (q.norm() > 1.0e-6f) {
+            q.normalize();
+            const Eigen::Matrix3f rotation = q.toRotationMatrix();
+            context.imu_roll = std::atan2(rotation(2, 1), rotation(2, 2));
+            context.imu_pitch = std::asin(
+                std::clamp(-rotation(2, 0), -1.0f, 1.0f));
+            const Eigen::Vector3f gravity_body =
+                q.conjugate() * Eigen::Vector3f(0.0f, 0.0f, -1.0f);
+            context.gravity_z = gravity_body.z();
+        }
+    }
+    if (ang_vel_buffer_.size() == 3) {
+        context.imu_wx = ang_vel_buffer_[0];
+        context.imu_wy = ang_vel_buffer_[1];
+        context.imu_wz = ang_vel_buffer_[2];
+    }
+    if (policy_transition_active_) {
+        const float duration = std::max(policy_transition_time_, dt_);
+        context.transition_phase = std::clamp(
+            policy_transition_elapsed_ / duration, 0.0f, 1.0f);
+    }
+    context.clamped_joint_count = clamped_joint_count;
+    run_logger_->record_sample(context);
+}
+
 void InferenceNode::start_stand_transition_locked() {
     stand_transition_elapsed_ = 0.0f;
     stand_transition_active_ = true;
@@ -260,7 +413,61 @@ void InferenceNode::start_stand_transition_locked() {
     }
 }
 
+void InferenceNode::sync_action_reference(const std::vector<float>& joint_q) {
+    if (joint_q.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("Joint feedback size does not match joint_num");
+    }
+    std::unique_lock<std::mutex> lock(act_mutex_);
+    act_ = joint_q;
+    last_act_ = joint_q;
+}
+
+void InferenceNode::start_policy_transition_locked(const std::vector<float>& current_joint_q) {
+    if (current_joint_q.size() != static_cast<size_t>(joint_num_)) {
+        throw std::runtime_error("Joint feedback size does not match joint_num");
+    }
+    control_mode_ = ControlMode::Policy;
+    stand_transition_active_ = false;
+    policy_transition_elapsed_ = 0.0f;
+    policy_transition_active_ = true;
+    policy_transition_target_ready_ = false;
+    policy_start_action_ = current_joint_q;
+    std::fill(policy_transition_offset_.begin(), policy_transition_offset_.end(), 0.0f);
+    policy_filtered_action_ = current_joint_q;
+    reset_policy_runtime(active_policy());
+    {
+        std::unique_lock<std::mutex> lock(act_mutex_);
+        act_ = current_joint_q;
+        last_act_ = current_joint_q;
+    }
+    {
+        std::unique_lock<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+    std::fill(joint_limit_violation_active_.begin(),
+              joint_limit_violation_active_.end(), false);
+    start_run_log();
+    is_running_.store(true);
+}
+
+void InferenceNode::enter_safe_stand_locked(const std::vector<float>& current_joint_q) {
+    sync_action_reference(current_joint_q);
+    control_mode_ = ControlMode::Stand;
+    policy_transition_active_ = false;
+    policy_transition_target_ready_ = false;
+    is_interrupt_.store(false);
+    is_motion_policy_.store(false);
+    active_policy_idx_ = 0;
+    {
+        std::unique_lock<std::mutex> lock(cmd_mutex_);
+        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    }
+    start_stand_transition_locked();
+    is_running_.store(true);
+}
+
 void InferenceNode::apply_stand_action() {
+    const auto stand_start = std::chrono::steady_clock::now();
     quat_buffer_ = robot_->get_quat();
     ang_vel_buffer_ = robot_->get_ang_vel();
     joint_pos_buffer_ = robot_->get_joint_q();
@@ -268,9 +475,12 @@ void InferenceNode::apply_stand_action() {
     const StandingStabilizer::Measurement measurement =
         stand_stabilizer_->measure(quat_buffer_, ang_vel_buffer_);
     if (measurement.gravity_z > gravity_z_upper_) {
-        RCLCPP_FATAL(this->get_logger(), "Robot fell down in stand mode! Shutting down...");
-        rclcpp::shutdown();
-        throw std::runtime_error("Robot fell down in stand mode");
+        RCLCPP_ERROR(this->get_logger(),
+                     "Robot fell down in stand mode; disabling motors and stopping control");
+        throw std::runtime_error(
+            "Robot fell down in stand mode: gravity_z=" +
+            std::to_string(measurement.gravity_z) +
+            ", threshold=" + std::to_string(gravity_z_upper_));
     }
 
     std::vector<float> target(joint_num_, 0.0f);
@@ -304,24 +514,37 @@ void InferenceNode::apply_stand_action() {
         stand_stabilizer_->apply(measurement, mpc_blend, target, stand_kp_, stand_kd_,
                                  joint_pos_buffer_, joint_vel_buffer_);
     const StandingStabilizer::Correction& correction = command.correction;
+    const auto stand_calc_end = std::chrono::steady_clock::now();
+    const auto stand_calc_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            stand_calc_end - stand_start).count();
     RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 500,
-                         "stand ctrl[whole_body_mpc]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f base_v=[%.3f, %.3f, %.3f] com_v=[%.3f, %.3f] est=%d/%d est_res=%.3g mpc=%s/%d iter=%d obj=%.3g mpc_acc=[%.3f, %.3f, %.3f, %.3f] mpc_f=%d L=[%.1f,%.1f,%.1f] R=[%.1f,%.1f,%.1f] step=%d phase=%d contacts=[%d,%d]/%d swing=[%d,%d] steps=%d/%d step_xy=[%.3f, %.3f] swing_err=%.3f force_qp=%d wbc_qp=%d active=%d viol=%.3g dyn_res=%.3g wbc_fz=[%.1f, %.1f] wbc_moment_des=[%.2f, %.2f] wbc_moment_act=[%.2f, %.2f] max_tau=%.3f raw_tau=%.3f sat=%d tau_j=%d",
+                         "stand ctrl[whole_body_mpc]: roll=%.4f pitch=%.4f wx=%.4f wy=%.4f base_v=[%.3f, %.3f, %.3f] com_v=[%.3f, %.3f] com_err=[%.3f, %.3f] est=%d/%d est_res=%.3g mpc=%s/%d iter=%d mpc_us=%d wbc_us=%d calc_us=%lld obj=%.3g mpc_acc=[%.3f, %.3f, %.3f, %.3f] mpc_f=%d jcmd=%d jcmd_delta=%.5f jcmd_vel=%.3f jcmd_j=%d L=[%.1f,%.1f,%.1f] R=[%.1f,%.1f,%.1f] step=%d phase=%d contacts=[%d,%d]/%d swing=[%d,%d] steps=%d/%d step_xy=[%.3f, %.3f] swing_err=%.3f force_qp=%d wbc_qp=%d active=%d viol=%.3g dyn_res=%.3g wbc_fz=[%.1f, %.1f] wbc_moment_des=[%.2f, %.2f] wbc_moment_act=[%.2f, %.2f] max_tau=%.3f raw_tau=%.3f sat=%d tau_j=%d",
                          measurement.roll, measurement.pitch, measurement.wx, measurement.wy,
                          correction.wbc_base_velocity_x,
                          correction.wbc_base_velocity_y,
                          correction.wbc_base_velocity_z,
                          correction.wbc_com_velocity_x,
                          correction.wbc_com_velocity_y,
+                         correction.wbc_com_error_x,
+                         correction.wbc_com_error_y,
                          correction.wbc_state_estimator_used ? 1 : 0,
                          correction.wbc_state_estimator_rows,
                          correction.wbc_state_estimator_residual,
                          correction.wbc_mpc_backend.c_str(),
                          correction.wbc_mpc_used ? 1 : 0,
                          correction.wbc_mpc_iterations,
+                         correction.wbc_mpc_solve_us,
+                         correction.wbc_whole_body_solve_us,
+                         static_cast<long long>(stand_calc_us),
                          correction.wbc_mpc_objective,
                          correction.mpc_roll_accel, correction.mpc_pitch_accel,
                          correction.mpc_com_accel_x, correction.mpc_com_accel_y,
                          correction.wbc_mpc_force_target_used ? 1 : 0,
+                         correction.mpc_joint_command_used ? 1 : 0,
+                         correction.mpc_joint_command_max_delta,
+                         correction.mpc_joint_command_max_velocity,
+                         correction.mpc_joint_command_max_joint_index,
                          correction.mpc_left_force_x,
                          correction.mpc_left_force_y,
                          correction.mpc_left_force_z,
@@ -366,24 +589,54 @@ void InferenceNode::apply_stand_action() {
 }
 
 void InferenceNode::apply_action() {
-    if(!is_running_.load() || !robot_->is_init_.load()){
+    if (!is_running_.load() || !robot_->is_init_.load()) {
+        return;
+    }
+    std::vector<float> command;
+    std::unique_lock<std::mutex> mode_lock(mode_mutex_);
+    if (control_mode_ == ControlMode::Stand) {
+        mode_lock.unlock();
+        apply_stand_action();
         return;
     }
     {
-        std::unique_lock<std::mutex> mode_lock(mode_mutex_);
-        if (control_mode_ == ControlMode::Stand) {
-            mode_lock.unlock();
-            apply_stand_action();
-            return;
-        }
-    }
-    {
         std::unique_lock<std::mutex> lock(act_mutex_);
-        for (size_t i = 0; i < act_.size(); i++) {
-            last_act_[i] = act_alpha_ * act_[i] + (1 - act_alpha_) * last_act_[i];
+        if (policy_transition_active_ && !policy_transition_target_ready_) {
+            command = policy_start_action_;
+        } else {
+            float remaining_offset = 0.0f;
+            if (policy_transition_active_) {
+                policy_transition_elapsed_ += dt_;
+                const float duration = std::max(policy_transition_time_, dt_);
+                const float phase = std::clamp(policy_transition_elapsed_ / duration, 0.0f, 1.0f);
+                const float phase2 = phase * phase;
+                const float phase3 = phase2 * phase;
+                const float smootherstep = phase3 * (phase * (phase * 6.0f - 15.0f) + 10.0f);
+                remaining_offset = 1.0f - smootherstep;
+                if (policy_transition_elapsed_ >= duration) {
+                    policy_transition_active_ = false;
+                }
+            }
+            // Decay only the handoff mismatch; do not attenuate subsequent policy motion.
+            for (size_t i = 0; i < act_.size(); i++) {
+                policy_filtered_action_[i] =
+                    act_alpha_ * act_[i] + (1.0f - act_alpha_) * policy_filtered_action_[i];
+                float target = policy_filtered_action_[i] +
+                               remaining_offset * policy_transition_offset_[i];
+                if (remaining_offset > 0.0f && !joint_limits_.empty()) {
+                    const float lower = static_cast<float>(joint_limits_[i * 2]) +
+                                        policy_joint_limit_margin_;
+                    const float upper = static_cast<float>(joint_limits_[i * 2 + 1]) -
+                                        policy_joint_limit_margin_;
+                    target = std::clamp(target, lower, upper);
+                }
+                last_act_[i] = target;
+            }
+            command = last_act_;
         }
     }
-    robot_->apply_action(last_act_);
+    mode_lock.unlock();
+    robot_->apply_action(command);
 }
 
 void InferenceNode::control() {
@@ -397,16 +650,29 @@ void InferenceNode::control() {
         auto loop_start = std::chrono::steady_clock::now();
         try {
             apply_action();
+            if (run_logger_ && run_logger_->active() && robot_->is_init_.load()) {
+                robot_->sample_telemetry(telemetry_snapshot_);
+                run_logger_->record_control(telemetry_snapshot_);
+            }
         } catch (const std::exception& e) {
-            RCLCPP_FATAL(this->get_logger(), "Exception in control thread: %s", e.what());
-            rclcpp::shutdown();
-            return;
+            RCLCPP_ERROR(this->get_logger(), "Exception in control thread: %s", e.what());
+            handle_runtime_fault("control_exception", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Unknown exception in control thread");
+            handle_runtime_fault("control_exception", "unknown exception");
         }
         auto loop_end = std::chrono::steady_clock::now();
         auto elapsed_time = std::chrono::duration_cast<std::chrono::microseconds>(loop_end - loop_start);
         auto sleep_time = period - elapsed_time;
         if (sleep_time > std::chrono::microseconds(0)) {
             std::this_thread::sleep_for(sleep_time);
+        } else {
+            RCLCPP_WARN_THROTTLE(
+                this->get_logger(), *this->get_clock(), 1000,
+                "Control loop overran! Took %lld us, but period is %lld us.",
+                static_cast<long long>(elapsed_time.count()),
+                static_cast<long long>(period.count()));
         }
     }
 }
@@ -428,12 +694,23 @@ void InferenceNode::inference() {
 
         try {
             std::unique_lock<std::mutex> mode_lock(mode_mutex_);
-            if (control_mode_ == ControlMode::Stand) {
+            if (control_mode_ != ControlMode::Policy) {
                 mode_lock.unlock();
                 std::this_thread::sleep_for(period);
                 continue;
             }
             auto& policy = active_policy();
+            if (!policy.inference_enabled || !policy.ctx) {
+                RCLCPP_ERROR_THROTTLE(
+                    this->get_logger(), *this->get_clock(), 1000,
+                    "Active policy %s is disabled: %s",
+                    policy.name.c_str(), policy.disabled_reason.c_str());
+                finish_run_log("policy_disabled", policy.disabled_reason, false);
+                is_running_.store(false);
+                mode_lock.unlock();
+                std::this_thread::sleep_for(period);
+                continue;
+            }
             update_obs_segments(policy.obs_segments, policy.obs_layout);
             publish_imu();
             publish_joint_states();
@@ -445,41 +722,72 @@ void InferenceNode::inference() {
 
             update_stacked_obs(policy.ctx->input_buffer, policy.obs, policy.obs_num, policy.frame_stack,
                                policy.stack_order, policy.obs_layout_sizes, policy.is_first_frame);
-            if(policy.extra_obs_num > 0){
+            if (policy.extra_obs_num > 0) {
                 update_obs_segments(policy.extra_obs_segments, policy.extra_obs_layout);
-                flatten_obs_segments(policy.extra_obs_segments, policy.ctx->input_buffer.begin() + policy.frame_stack * policy.obs_num);
+                flatten_obs_segments(
+                    policy.extra_obs_segments,
+                    policy.ctx->input_buffer.begin() + policy.frame_stack * policy.obs_num);
             }
             if (policy.motion_loader) {
                 step_motion_frame();
             }
             policy.is_first_frame = false;
 
-            policy.ctx->session->Run(Ort::RunOptions{nullptr},
+            policy.ctx->session->Run(
+                Ort::RunOptions{nullptr},
                 policy.ctx->input_names_raw.data(), policy.ctx->input_tensor.get(), policy.ctx->num_inputs,
                 policy.ctx->output_names_raw.data(), policy.ctx->output_tensor.get(), policy.ctx->num_outputs);
 
+            size_t clamped_joint_count = 0;
             {
                 std::unique_lock<std::mutex> lock(act_mutex_);
-                for (float& action : policy.ctx->output_buffer) {
-                    action = std::clamp(action, -clip_actions_, clip_actions_);
-                }
                 for (size_t i = 0; i < usd2urdf_.size(); i++) {
                     const size_t joint_idx = static_cast<size_t>(usd2urdf_[i]);
-                    act_[joint_idx] = policy.ctx->output_buffer[i];
-                    act_[joint_idx] = act_[joint_idx] * action_scale_ + joint_default_angle_[joint_idx];
+                    const float action =
+                        std::clamp(policy.ctx->output_buffer[i], -clip_actions_, clip_actions_);
+                    float target = static_cast<float>(
+                        policy_joint_signs_[i] * action * action_scale_ +
+                        joint_default_angle_[joint_idx]);
+                    if (!joint_limits_.empty()) {
+                        const float lower = static_cast<float>(joint_limits_[joint_idx * 2]) +
+                                            policy_joint_limit_margin_;
+                        const float upper = static_cast<float>(joint_limits_[joint_idx * 2 + 1]) -
+                                            policy_joint_limit_margin_;
+                        const float clamped_target = std::clamp(target, lower, upper);
+                        clamped_joint_count += clamped_target != target ? 1 : 0;
+                        target = clamped_target;
+                    }
+                    act_[joint_idx] = target;
                 }
-                if(supports_interrupt() && is_interrupt_.load()){
+                if (clamped_joint_count > 0) {
+                    RCLCPP_WARN_THROTTLE(
+                        this->get_logger(), *this->get_clock(), 1000,
+                        "Policy targets clamped by mechanical limits for %zu joint(s)",
+                        clamped_joint_count);
+                }
+                if (supports_interrupt() && is_interrupt_.load()) {
                     std::unique_lock<std::mutex> lock(interrupt_mutex_);
                     for (size_t i = 0; i < interrupt_action_.size(); i++) {
                         act_[act_.size() - interrupt_action_.size() + i] = interrupt_action_[i];
                     }
                 }
+                if (policy_transition_active_ && !policy_transition_target_ready_) {
+                    for (size_t i = 0; i < act_.size(); i++) {
+                        policy_filtered_action_[i] = act_[i];
+                        policy_transition_offset_[i] = policy_start_action_[i] - act_[i];
+                    }
+                    policy_transition_target_ready_ = true;
+                }
                 publish_action();
             }
+            record_policy_sample(clamped_joint_count);
         } catch (const std::exception& e) {
-            RCLCPP_FATAL(this->get_logger(), "Exception in inference thread: %s", e.what());
-            rclcpp::shutdown();
-            return;
+            RCLCPP_ERROR(this->get_logger(), "Exception in inference thread: %s", e.what());
+            handle_runtime_fault("inference_exception", e.what());
+        } catch (...) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "Unknown exception in inference thread");
+            handle_runtime_fault("inference_exception", "unknown exception");
         }
 
         auto loop_end = std::chrono::steady_clock::now();
@@ -519,6 +827,7 @@ int main(int argc, char **argv) {
             RCLCPP_INFO(node->get_logger(), "Press 'LB' to switch policy mode (available in beyondmimic / interrupt modes)");
         }
         RCLCPP_INFO(node->get_logger(), "Press 'LSB' to enter/exit stand mode");
+        RCLCPP_INFO(node->get_logger(), "Press 'RSB' to move to the policy default pose");
         if (node->has_motion_policy()){
             RCLCPP_INFO(node->get_logger(), "Press 'RB' to switch motion sequence (available in beyondmimic mode)");
         }

@@ -1605,6 +1605,20 @@ CentroidalMpcOutput Ocs2CentroidalMpc::solve(
         last_input_ = bounded_control;
     };
 
+    const auto apply_last_valid_control = [&]() {
+        if (!has_last_input_ ||
+            last_input_.size() != static_cast<int>(model_->info().inputDim)) {
+            return;
+        }
+
+        const ocs2::vector_t bounded_control =
+            project_input(last_input_, input.left_contact, input.right_contact);
+        fill_output(bounded_control, state, input, 0, 0.0, output);
+        output.solved = false;
+        output.iterations = 0;
+        output.objective = 0.0;
+    };
+
     try {
         if (config_.mrt_enabled) {
             start_mrt_worker();
@@ -1649,6 +1663,10 @@ CentroidalMpcOutput Ocs2CentroidalMpc::solve(
         }
         has_last_input_ = false;
         last_input_ = nominal_input(input.left_contact, input.right_contact);
+    }
+
+    if (!output.has_desired_contact_forces) {
+        apply_last_valid_control();
     }
 
     time_ += config_.control_dt;

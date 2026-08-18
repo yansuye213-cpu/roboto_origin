@@ -205,6 +205,7 @@ if __name__ == "__main__":
     gmr_dof_names = config['gmr_dof_names']
     lab_dof_names = config['lab_dof_names']
     lab_key_body_names = config['lab_key_body_names']
+    dof_name_aliases = config.get('dof_name_aliases', {})
     
     loop_mode = LoopMode.CLAMP if args_cli.loop == "clamp" else LoopMode.WRAP
     
@@ -213,6 +214,7 @@ if __name__ == "__main__":
         gmr_dof_names=gmr_dof_names,
         lab_dof_names=lab_dof_names,
         loop_mode=loop_mode,
+        dof_name_aliases=dof_name_aliases,
         start_frame=args_cli.frame_range[0] if args_cli.frame_range else 0,
         end_frame=args_cli.frame_range[1] if args_cli.frame_range else -1,
     )
@@ -235,7 +237,9 @@ if __name__ == "__main__":
     print("Simulation starting ...")
     
     motion_data_dicts = [motion_data_dict]
-    motion_data_dicts = run_simulator(simulation_app, sim, scene, motion_data_dicts, lab_key_body_names)
+    motion_data_dicts = run_simulator(
+        simulation_app, sim, scene, motion_data_dicts, lab_key_body_names, lab_dof_names
+    )
     
     motion_data_dict = motion_data_dicts[0]
     

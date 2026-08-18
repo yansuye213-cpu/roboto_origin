@@ -1,0 +1,30 @@
+[Unit]
+Description=Roboparty robot startup
+After=systemd-udev-trigger.service network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=limrobot
+Group=limrobot
+WorkingDirectory=/home/limrobot/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy
+
+Environment=HOME=/home/limrobot
+Environment=TERM=xterm-256color
+Environment=OCS2_WS_SETUP=/home/limrobot/ocs2_ws/install/setup.bash
+
+ExecStart=/home/limrobot/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy/tools/roboparty-autostart.sh
+ExecStop=-/usr/bin/screen -S inference_session -X quit
+ExecStop=-/usr/bin/screen -S joy_session -X quit
+
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=15min
+TimeoutStopSec=30s
+
+LimitRTPRIO=99
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

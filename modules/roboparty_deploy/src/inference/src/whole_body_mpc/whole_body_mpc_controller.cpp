@@ -4,6 +4,7 @@
 #include "whole_body_mpc/whole_body_mpc_controller.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <filesystem>
@@ -348,6 +349,13 @@ void WholeBodyMpcController::reset() {
     latest_state_estimate_ = BaseStateEstimator::Output{};
     state_estimator_left_contact_ = true;
     state_estimator_right_contact_ = true;
+    has_smoothed_mpc_output_ = false;
+    has_smoothed_body_moment_ = false;
+    smoothed_mpc_angular_acceleration_.setZero();
+    smoothed_mpc_com_acceleration_.setZero();
+    smoothed_mpc_left_force_.setZero();
+    smoothed_mpc_right_force_.setZero();
+    smoothed_body_moment_.setZero();
 }
 
 std::vector<std::string> WholeBodyMpcController::diagnostics() const {
@@ -413,7 +421,17 @@ std::vector<std::string> WholeBodyMpcController::diagnostics() const {
         " joint_velocity_weight=" +
         std::to_string(config_.wbc_mpc_joint_velocity_weight) +
         " max_force_delta=" +
-        std::to_string(config_.wbc_mpc_max_contact_force_delta));
+        std::to_string(config_.wbc_mpc_max_contact_force_delta) +
+        " output_signs=[" + std::to_string(config_.wbc_mpc_output_roll_sign) +
+        ", " + std::to_string(config_.wbc_mpc_output_pitch_sign) + "]" +
+        " output_scales=[" + std::to_string(config_.wbc_mpc_output_roll_scale) +
+        ", " + std::to_string(config_.wbc_mpc_output_pitch_scale) + "]");
+    lines.emplace_back(
+        "whole_body_mpc body_moment_limit: max=" +
+        std::to_string(config_.wbc_max_body_moment) +
+        " rate=" + std::to_string(config_.wbc_body_moment_rate_limit) +
+        " filter_weight=" +
+        std::to_string(config_.wbc_body_moment_filter_weight));
     lines.emplace_back(
         "whole_body_mpc ocs2_full_centroidal: ad_folder=" +
         config_.wbc_mpc_ad_model_folder +
@@ -590,10 +608,33 @@ StandingStabilizer::Command WholeBodyMpcController::apply(
         build_centroidal_mpc_input(measurement, contacts, gait_reference,
                                    contact_schedule, current_joint_position,
                                    current_joint_velocity);
-    const CentroidalMpc::Output mpc_output = centroidal_mpc_->solve(mpc_input);
+    correction.wbc_com_error_x = static_cast<float>(mpc_input.com_offset_error.x());
+    correction.wbc_com_error_y = static_cast<float>(mpc_input.com_offset_error.y());
+    const auto mpc_solve_start = std::chrono::steady_clock::now();
+    CentroidalMpc::Output mpc_output = centroidal_mpc_->solve(mpc_input);
+    const auto mpc_solve_end = std::chrono::steady_clock::now();
+    if (mpc_output.has_desired_contact_forces) {
+        mpc_output.desired_angular_acceleration.x() *=
+            static_cast<double>(config_.wbc_mpc_output_roll_scale);
+        mpc_output.desired_angular_acceleration.y() *=
+            static_cast<double>(config_.wbc_mpc_output_pitch_scale);
+    } else {
+        mpc_output.desired_angular_acceleration.x() *=
+            static_cast<double>(config_.wbc_mpc_output_roll_sign) *
+            static_cast<double>(config_.wbc_mpc_output_roll_scale);
+        mpc_output.desired_angular_acceleration.y() *=
+            static_cast<double>(config_.wbc_mpc_output_pitch_sign) *
+            static_cast<double>(config_.wbc_mpc_output_pitch_scale);
+    }
+    mpc_output.control[0] = mpc_output.desired_angular_acceleration.x();
+    mpc_output.control[1] = mpc_output.desired_angular_acceleration.y();
+    smooth_mpc_output(mpc_output);
     correction.wbc_mpc_backend = mpc_output.backend;
     correction.wbc_mpc_used = mpc_output.solved;
     correction.wbc_mpc_iterations = mpc_output.iterations;
+    correction.wbc_mpc_solve_us = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            mpc_solve_end - mpc_solve_start).count());
     correction.wbc_mpc_objective = static_cast<float>(mpc_output.objective);
     correction.mpc_roll_accel =
         static_cast<float>(mpc_output.desired_angular_acceleration.x());
@@ -617,7 +658,7 @@ StandingStabilizer::Command WholeBodyMpcController::apply(
         static_cast<float>(mpc_output.desired_right_contact_force.z());
     correction.wbc_mpc_force_target_used = mpc_output.has_desired_contact_forces;
     apply_mpc_joint_command(mpc_output, current_joint_position,
-                            command.position, command.velocity);
+                            command.position, command.velocity, correction);
 
     ContactForceQp::Input qp_input = build_contact_qp_input(mpc_output, contacts);
     const ContactForceQp::Result contact_result =
@@ -643,9 +684,14 @@ StandingStabilizer::Command WholeBodyMpcController::apply(
     wbc_input.configured_joint_velocity_indices =
         &robot_model_->configured_joint_velocity_indices();
     wbc_input.blend = blend;
+    const auto wbc_solve_start = std::chrono::steady_clock::now();
     const WholeBodyWbc::Result wbc_result =
         whole_body_wbc_ ? whole_body_wbc_->solve(wbc_input)
                         : WholeBodyWbc::Result{};
+    const auto wbc_solve_end = std::chrono::steady_clock::now();
+    correction.wbc_whole_body_solve_us = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            wbc_solve_end - wbc_solve_start).count());
     correction.wbc_whole_body_qp_used = config_.wbc_whole_body_qp_enabled;
     correction.qp_used = correction.wbc_whole_body_qp_used;
     correction.wbc_left_normal_force = static_cast<float>(wbc_result.left_force.z());
@@ -696,6 +742,52 @@ StandingStabilizer::Command WholeBodyMpcController::apply(
     command.tau = wbc_result.tau;
     command.correction = correction;
     return command;
+}
+
+void WholeBodyMpcController::smooth_mpc_output(
+    CentroidalMpc::Output& mpc_output) {
+    if (!config_.wbc_mpc_input_smoothing_enabled ||
+        config_.wbc_mpc_input_smooth_weight <= 0.0f ||
+        !mpc_output.has_desired_contact_forces) {
+        if (!mpc_output.has_desired_contact_forces) {
+            has_smoothed_mpc_output_ = false;
+        }
+        return;
+    }
+
+    const double alpha =
+        1.0 / (1.0 + static_cast<double>(config_.wbc_mpc_input_smooth_weight));
+    if (!has_smoothed_mpc_output_) {
+        smoothed_mpc_angular_acceleration_ =
+            mpc_output.desired_angular_acceleration;
+        smoothed_mpc_com_acceleration_ = mpc_output.desired_com_acceleration;
+        smoothed_mpc_left_force_ = mpc_output.desired_left_contact_force;
+        smoothed_mpc_right_force_ = mpc_output.desired_right_contact_force;
+        has_smoothed_mpc_output_ = true;
+    } else {
+        smoothed_mpc_angular_acceleration_ =
+            (1.0 - alpha) * smoothed_mpc_angular_acceleration_ +
+            alpha * mpc_output.desired_angular_acceleration;
+        smoothed_mpc_com_acceleration_ =
+            (1.0 - alpha) * smoothed_mpc_com_acceleration_ +
+            alpha * mpc_output.desired_com_acceleration;
+        smoothed_mpc_left_force_ =
+            (1.0 - alpha) * smoothed_mpc_left_force_ +
+            alpha * mpc_output.desired_left_contact_force;
+        smoothed_mpc_right_force_ =
+            (1.0 - alpha) * smoothed_mpc_right_force_ +
+            alpha * mpc_output.desired_right_contact_force;
+    }
+
+    mpc_output.desired_angular_acceleration =
+        smoothed_mpc_angular_acceleration_;
+    mpc_output.desired_com_acceleration = smoothed_mpc_com_acceleration_;
+    mpc_output.desired_left_contact_force = smoothed_mpc_left_force_;
+    mpc_output.desired_right_contact_force = smoothed_mpc_right_force_;
+    mpc_output.control[0] = mpc_output.desired_angular_acceleration.x();
+    mpc_output.control[1] = mpc_output.desired_angular_acceleration.y();
+    mpc_output.control[2] = mpc_output.desired_com_acceleration.x();
+    mpc_output.control[3] = mpc_output.desired_com_acceleration.y();
 }
 
 Eigen::Vector3d WholeBodyMpcController::foot_contact_center(
@@ -858,7 +950,7 @@ WholeBodyMpcController::ContactPointSet WholeBodyMpcController::build_contact_po
 
 ContactForceQp::Input WholeBodyMpcController::build_contact_qp_input(
     const CentroidalMpc::Output& mpc_output,
-    const ContactPointSet& contacts) const {
+    const ContactPointSet& contacts) {
     ContactForceQp::Input input;
     input.mass = robot_mass_;
     input.com_position = latest_kinematics_.com_position;
@@ -879,10 +971,58 @@ ContactForceQp::Input WholeBodyMpcController::build_contact_qp_input(
             latest_kinematics_.mass_matrix.block<3, 3>(3, 3) *
             mpc_output.desired_angular_acceleration;
     }
-    input.desired_body_moment << clamp_abs(desired_body_moment.x(), config_.wbc_max_body_moment),
-                                 clamp_abs(desired_body_moment.y(), config_.wbc_max_body_moment),
-                                 0.0;
+    Eigen::Vector3d limited_body_moment(
+        clamp_abs(desired_body_moment.x(), config_.wbc_max_body_moment),
+        clamp_abs(desired_body_moment.y(), config_.wbc_max_body_moment),
+        0.0);
+    input.desired_body_moment = smooth_body_moment_target(limited_body_moment);
     return input;
+}
+
+Eigen::Vector3d WholeBodyMpcController::smooth_body_moment_target(
+    const Eigen::Vector3d& target) {
+    const bool filter_enabled =
+        config_.wbc_body_moment_filter_weight > 0.0f;
+    const bool rate_limit_enabled =
+        config_.wbc_body_moment_rate_limit > 0.0f &&
+        config_.dt > 0.0f;
+    if (!filter_enabled && !rate_limit_enabled) {
+        has_smoothed_body_moment_ = false;
+        smoothed_body_moment_ = target;
+        return target;
+    }
+
+    if (!has_smoothed_body_moment_) {
+        smoothed_body_moment_.setZero();
+        has_smoothed_body_moment_ = true;
+    }
+
+    Eigen::Vector3d filtered_target = target;
+    if (filter_enabled) {
+        const double alpha =
+            1.0 / (1.0 + static_cast<double>(
+                             config_.wbc_body_moment_filter_weight));
+        filtered_target =
+            (1.0 - alpha) * smoothed_body_moment_ + alpha * target;
+    }
+
+    Eigen::Vector3d output = filtered_target;
+    if (rate_limit_enabled) {
+        const double max_delta =
+            static_cast<double>(config_.wbc_body_moment_rate_limit) *
+            static_cast<double>(config_.dt);
+        const Eigen::Vector3d delta = filtered_target - smoothed_body_moment_;
+        output = smoothed_body_moment_ +
+                 Eigen::Vector3d(clamp_abs(delta.x(), max_delta),
+                                 clamp_abs(delta.y(), max_delta),
+                                 0.0);
+    }
+
+    output.x() = clamp_abs(output.x(), config_.wbc_max_body_moment);
+    output.y() = clamp_abs(output.y(), config_.wbc_max_body_moment);
+    output.z() = 0.0;
+    smoothed_body_moment_ = output;
+    return output;
 }
 
 ContactForceQp::Result WholeBodyMpcController::make_nominal_contact_result(
@@ -951,7 +1091,8 @@ void WholeBodyMpcController::apply_mpc_joint_command(
     const CentroidalMpc::Output& mpc_output,
     const std::vector<float>& current_joint_position,
     std::vector<float>& command_position,
-    std::vector<float>& command_velocity) const {
+    std::vector<float>& command_velocity,
+    StandingStabilizer::Correction& correction) const {
     if (!config_.wbc_mpc_joint_command_enabled ||
         !mpc_output.has_desired_joint_command ||
         current_joint_position.size() != command_position.size() ||
@@ -971,27 +1112,61 @@ void WholeBodyMpcController::apply_mpc_joint_command(
     const double velocity_scale =
         std::max(static_cast<double>(config_.wbc_mpc_joint_command_velocity_scale),
                  0.0);
-    const double velocity_limit =
-        static_cast<double>(config_.wbc_swing_max_joint_velocity);
+    const double velocity_limit = std::min(
+        static_cast<double>(config_.wbc_swing_max_joint_velocity),
+        static_cast<double>(config_.wbc_mpc_joint_command_max_velocity));
+    const double max_delta =
+        static_cast<double>(config_.wbc_mpc_joint_command_max_delta);
 
     for (int joint_index : controlled_joint_indices) {
         if (joint_index < 0 ||
             joint_index >= static_cast<int>(command_position.size())) {
             continue;
         }
+        const double joint_scale =
+            config_.wbc_mpc_joint_command_joint_scale.empty()
+                ? 1.0
+                : std::clamp(
+                      config_.wbc_mpc_joint_command_joint_scale
+                          [static_cast<size_t>(joint_index)],
+                      0.0, 1.0);
+        if (joint_scale <= 0.0) {
+            continue;
+        }
         const double desired_velocity =
-            mpc_output.desired_joint_velocity[joint_index];
+            joint_scale * mpc_output.desired_joint_velocity[joint_index];
+        const double limited_desired_velocity =
+            clamp_abs(desired_velocity, velocity_limit);
+        double delta =
+            position_gain * static_cast<double>(config_.dt) *
+            limited_desired_velocity;
+        if (max_delta > 0.0) {
+            delta = clamp_abs(delta, max_delta);
+        }
         double target =
-            static_cast<double>(current_joint_position[joint_index]) +
-            position_gain * static_cast<double>(config_.dt) * desired_velocity;
+            static_cast<double>(current_joint_position[joint_index]) + delta;
         if (!config_.joint_limits.empty()) {
             const int lower_idx = joint_index * 2;
             target = std::clamp(target, config_.joint_limits[lower_idx],
                                 config_.joint_limits[lower_idx + 1]);
         }
         command_position[joint_index] = static_cast<float>(target);
+        const double command_vel =
+            clamp_abs(velocity_scale * limited_desired_velocity,
+                      velocity_limit);
         command_velocity[joint_index] = static_cast<float>(
-            clamp_abs(velocity_scale * desired_velocity, velocity_limit));
+            command_vel);
+        const double applied_delta =
+            target - static_cast<double>(current_joint_position[joint_index]);
+        if (std::abs(applied_delta) > correction.mpc_joint_command_max_delta) {
+            correction.mpc_joint_command_max_delta =
+                static_cast<float>(std::abs(applied_delta));
+            correction.mpc_joint_command_max_joint_index = joint_index;
+        }
+        correction.mpc_joint_command_max_velocity =
+            std::max(correction.mpc_joint_command_max_velocity,
+                     static_cast<float>(std::abs(command_vel)));
+        correction.mpc_joint_command_used = true;
     }
 }
 
