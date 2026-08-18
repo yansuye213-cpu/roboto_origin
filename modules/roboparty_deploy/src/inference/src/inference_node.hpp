@@ -255,9 +255,10 @@ class InferenceNode : public rclcpp::Node {
     float obs_scales_lin_vel_, obs_scales_ang_vel_, obs_scales_dof_pos_, obs_scales_dof_vel_,
         obs_scales_gravity_b_, clip_observations_;
     float action_scale_, clip_actions_, policy_joint_limit_margin_, joint_limit_check_tolerance_;
-    double joy_timeout_sec_, joy_linear_axis_deadzone_;
+    double joy_timeout_sec_, joy_linear_axis_hysteresis_;
     std::vector<double> clip_cmd_, joint_default_angle_, policy_joint_signs_, reset_joint_angle_, stand_joint_angle_, joint_limits_;
-    std::vector<double> joy_linear_axis_thresholds_, joy_linear_speed_levels_;
+    std::vector<double> joy_linear_axis_thresholds_, joy_linear_speed_levels_,
+        joy_backward_speed_levels_;
     std::vector<long int> usd2urdf_;
     std::vector<bool> joint_limit_violation_active_;
     float gravity_z_upper_;
@@ -280,6 +281,8 @@ class InferenceNode : public rclcpp::Node {
         last_button_rsb_ = 0;
     std::atomic<int64_t> last_joy_message_ns_{0};
     std::atomic<bool> joy_watchdog_timed_out_{false};
+    int joy_longitudinal_level_ = 0;
+    int joy_lateral_level_ = 0;
     std::vector<PolicyRuntime> policies_;
     std::vector<int> motion_policy_indices_;
     rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_joints_service_, set_zeros_service_, clear_errors_service_, refresh_joints_service_, read_joints_service_, read_imu_service_, init_motors_service_, deinit_motors_service_, start_inference_service_, stop_inference_service_;
@@ -292,6 +295,11 @@ class InferenceNode : public rclcpp::Node {
 
     void subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg);
     void check_joy_watchdog();
+    double map_joy_linear_axis_locked(
+        float axis, int& signed_level,
+        const std::vector<double>& positive_speed_levels,
+        const std::vector<double>& negative_speed_levels);
+    void clear_velocity_command_locked();
     void subs_cmd_callback(const std::shared_ptr<geometry_msgs::msg::Twist> msg);
     void subs_elevation_callback(const std::shared_ptr<std_msgs::msg::Float32MultiArray> msg);
     void subs_joint_state_callback(const std::shared_ptr<sensor_msgs::msg::JointState> msg);

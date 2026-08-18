@@ -165,7 +165,7 @@ void InferenceNode::reset_runtime_state() {
     }
     {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
-        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        clear_velocity_command_locked();
     }
     {
         std::unique_lock<std::mutex> lock(perception_mutex_);
@@ -304,7 +304,7 @@ void InferenceNode::handle_runtime_fault(const std::string& source,
         robot_ && robot_->is_init_.exchange(false);
     {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
-        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        clear_velocity_command_locked();
     }
 
     if (run_logger_ && run_logger_->active()) {
@@ -442,7 +442,7 @@ void InferenceNode::start_policy_transition_locked(const std::vector<float>& cur
     }
     {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
-        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        clear_velocity_command_locked();
     }
     std::fill(joint_limit_violation_active_.begin(),
               joint_limit_violation_active_.end(), false);
@@ -460,7 +460,7 @@ void InferenceNode::enter_safe_stand_locked(const std::vector<float>& current_jo
     active_policy_idx_ = 0;
     {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
-        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        clear_velocity_command_locked();
     }
     start_stand_transition_locked();
     is_running_.store(true);

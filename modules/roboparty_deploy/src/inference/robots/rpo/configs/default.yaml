@@ -27,10 +27,11 @@ inference_node:
              -1.0, 1.0,
              -1.0, 1.0]
         joy_timeout_sec: 0.5
-        # Right-stick linear speed mapping: deadzone, then 0.5/0.7/1.0 m/s.
-        joy_linear_axis_deadzone: 0.1
-        joy_linear_axis_thresholds: [0.5, 0.7]
+        # Stateful hysteresis around the stop/gear boundaries prevents chatter.
+        joy_linear_axis_hysteresis: 0.03
+        joy_linear_axis_thresholds: [0.15, 0.45, 0.75]
         joy_linear_speed_levels: [0.5, 0.7, 1.0]
+        joy_backward_speed_levels: [0.1, 0.2, 0.3]
         joint_default_angle:
             [-0.15, 0.0, 0.0, 0.25, -0.1, 0.0,
              -0.15, 0.0, 0.0, 0.25, -0.1, 0.0,

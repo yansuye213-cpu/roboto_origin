@@ -36,11 +36,13 @@ void InferenceNode::load_config() {
     this->declare_parameter<std::vector<long int>>("usd2urdf", std::vector<long int>{});
     this->declare_parameter<std::vector<double>>("clip_cmd", std::vector<double>{});
     this->declare_parameter<double>("joy_timeout_sec", 0.5);
-    this->declare_parameter<double>("joy_linear_axis_deadzone", 0.1);
+    this->declare_parameter<double>("joy_linear_axis_hysteresis", 0.03);
     this->declare_parameter<std::vector<double>>(
-        "joy_linear_axis_thresholds", std::vector<double>{0.5, 0.7});
+        "joy_linear_axis_thresholds", std::vector<double>{0.15, 0.45, 0.75});
     this->declare_parameter<std::vector<double>>(
         "joy_linear_speed_levels", std::vector<double>{0.5, 0.7, 1.0});
+    this->declare_parameter<std::vector<double>>(
+        "joy_backward_speed_levels", std::vector<double>{0.1, 0.2, 0.3});
     this->declare_parameter<std::vector<double>>("joint_default_angle", std::vector<double>{});
     this->declare_parameter<std::vector<double>>("policy_joint_signs", std::vector<double>{});
     this->declare_parameter<float>("policy_joint_limit_margin", 0.0);
@@ -242,9 +244,10 @@ void InferenceNode::load_config() {
     this->get_parameter("usd2urdf", usd2urdf_);
     this->get_parameter("clip_cmd", clip_cmd_);
     this->get_parameter("joy_timeout_sec", joy_timeout_sec_);
-    this->get_parameter("joy_linear_axis_deadzone", joy_linear_axis_deadzone_);
+    this->get_parameter("joy_linear_axis_hysteresis", joy_linear_axis_hysteresis_);
     this->get_parameter("joy_linear_axis_thresholds", joy_linear_axis_thresholds_);
     this->get_parameter("joy_linear_speed_levels", joy_linear_speed_levels_);
+    this->get_parameter("joy_backward_speed_levels", joy_backward_speed_levels_);
     this->get_parameter("joint_default_angle", joint_default_angle_);
     this->get_parameter("policy_joint_signs", policy_joint_signs_);
     this->get_parameter("policy_joint_limit_margin", policy_joint_limit_margin_);
@@ -451,24 +454,45 @@ void InferenceNode::load_config() {
     if (joy_timeout_sec_ < 0.0) {
         throw std::runtime_error("joy_timeout_sec must be non-negative");
     }
-    if (joy_linear_axis_thresholds_.size() != 2 ||
-        joy_linear_speed_levels_.size() != 3) {
+    if (joy_linear_axis_thresholds_.size() != 3 ||
+        joy_linear_speed_levels_.size() != 3 ||
+        joy_backward_speed_levels_.size() != 3) {
         throw std::runtime_error(
-            "joy linear mapping requires 2 axis thresholds and 3 speed levels");
+            "joy linear mapping requires 3 axis thresholds, 3 linear speed "
+            "levels, and 3 backward speed levels");
     }
-    if (joy_linear_axis_deadzone_ < 0.0 ||
-        joy_linear_axis_deadzone_ >= joy_linear_axis_thresholds_[0] ||
+    if (joy_linear_axis_thresholds_[0] <= 0.0 ||
         joy_linear_axis_thresholds_[0] >= joy_linear_axis_thresholds_[1] ||
-        joy_linear_axis_thresholds_[1] > 1.0) {
+        joy_linear_axis_thresholds_[1] >= joy_linear_axis_thresholds_[2] ||
+        joy_linear_axis_thresholds_[2] >= 1.0) {
         throw std::runtime_error(
-            "joy linear axis mapping must satisfy 0 <= deadzone < threshold0 "
-            "< threshold1 <= 1");
+            "joy linear axis thresholds must be strictly increasing and "
+            "inside (0, 1)");
+    }
+    if (joy_linear_axis_hysteresis_ < 0.0 ||
+        joy_linear_axis_thresholds_[0] - joy_linear_axis_hysteresis_ < 0.0 ||
+        joy_linear_axis_thresholds_[2] + joy_linear_axis_hysteresis_ > 1.0 ||
+        joy_linear_axis_thresholds_[0] + joy_linear_axis_hysteresis_ >=
+            joy_linear_axis_thresholds_[1] - joy_linear_axis_hysteresis_ ||
+        joy_linear_axis_thresholds_[1] + joy_linear_axis_hysteresis_ >=
+            joy_linear_axis_thresholds_[2] - joy_linear_axis_hysteresis_) {
+        throw std::runtime_error(
+            "joy linear axis hysteresis must keep all upshift/downshift "
+            "boundaries ordered inside [0, 1]");
     }
     if (joy_linear_speed_levels_[0] <= 0.0 ||
         joy_linear_speed_levels_[0] > joy_linear_speed_levels_[1] ||
         joy_linear_speed_levels_[1] > joy_linear_speed_levels_[2]) {
         throw std::runtime_error(
             "joy linear speed levels must be positive and non-decreasing");
+    }
+    if (joy_backward_speed_levels_[0] <= 0.0 ||
+        joy_backward_speed_levels_[0] > joy_backward_speed_levels_[1] ||
+        joy_backward_speed_levels_[1] > joy_backward_speed_levels_[2] ||
+        joy_backward_speed_levels_[2] > 0.3) {
+        throw std::runtime_error(
+            "joy backward speed levels must be positive, non-decreasing, and "
+            "no greater than 0.3 m/s");
     }
     if (stand_joint_angle_.empty()) {
         stand_joint_angle_ = joint_default_angle_;
@@ -762,11 +786,13 @@ void InferenceNode::load_config() {
     print_vector<long int>("usd2urdf", usd2urdf_);
     print_vector<double>("clip_cmd", clip_cmd_);
     RCLCPP_INFO(this->get_logger(), "joy_timeout_sec: %f", joy_timeout_sec_);
-    RCLCPP_INFO(this->get_logger(), "joy_linear_axis_deadzone: %f",
-                joy_linear_axis_deadzone_);
+    RCLCPP_INFO(this->get_logger(), "joy_linear_axis_hysteresis: %f",
+                joy_linear_axis_hysteresis_);
     print_vector<double>("joy_linear_axis_thresholds",
                          joy_linear_axis_thresholds_);
     print_vector<double>("joy_linear_speed_levels", joy_linear_speed_levels_);
+    print_vector<double>("joy_backward_speed_levels",
+                         joy_backward_speed_levels_);
     print_vector<double>("joint_default_angle", joint_default_angle_);
     print_vector<double>("policy_joint_signs", policy_joint_signs_);
     RCLCPP_INFO(this->get_logger(), "policy_joint_limit_margin: %f", policy_joint_limit_margin_);
@@ -944,6 +970,51 @@ void InferenceNode::load_config() {
                 run_log_enabled_ ? "true" : "false", run_log_directory_.c_str());
 }
 
+double InferenceNode::map_joy_linear_axis_locked(
+    float axis, int& signed_level,
+    const std::vector<double>& positive_speed_levels,
+    const std::vector<double>& negative_speed_levels) {
+    const double magnitude = std::clamp(
+        std::abs(static_cast<double>(axis)), 0.0, 1.0);
+    const int input_direction = axis > 0.0f ? 1 : axis < 0.0f ? -1 : 0;
+    int level = std::abs(signed_level);
+
+    if (level > 0 && input_direction != 0 &&
+        input_direction != (signed_level > 0 ? 1 : -1)) {
+        signed_level = 0;
+        return 0.0;
+    }
+
+    const int direction = level > 0
+        ? (signed_level > 0 ? 1 : -1)
+        : input_direction;
+    while (level < 3 &&
+           magnitude > joy_linear_axis_thresholds_[level] +
+                           joy_linear_axis_hysteresis_) {
+        ++level;
+    }
+    while (level > 0 &&
+           magnitude < joy_linear_axis_thresholds_[level - 1] -
+                           joy_linear_axis_hysteresis_) {
+        --level;
+    }
+
+    if (level == 0 || direction == 0) {
+        signed_level = 0;
+        return 0.0;
+    }
+    signed_level = direction * level;
+    const auto& speed_levels =
+        direction > 0 ? positive_speed_levels : negative_speed_levels;
+    return direction * speed_levels[level - 1];
+}
+
+void InferenceNode::clear_velocity_command_locked() {
+    std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+    joy_longitudinal_level_ = 0;
+    joy_lateral_level_ = 0;
+}
+
 void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Joy> msg) {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     last_joy_message_ns_.store(
@@ -991,7 +1062,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
 
     if (runtime_fault_handling_.load()) {
         std::lock_guard<std::mutex> lock(cmd_mutex_);
-        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        clear_velocity_command_locked();
         last_button0_ = button_x;
         last_button1_ = button_a;
         last_button2_ = button_b;
@@ -1006,23 +1077,18 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
     if (is_joy_control_){
         std::unique_lock<std::mutex> lock(cmd_mutex_);
         if (msg->axes.size() < kRequiredAxes) {
-            std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+            clear_velocity_command_locked();
         } else {
-            const auto map_linear_axis = [this](float axis) {
-                const double magnitude = std::abs(static_cast<double>(axis));
-                if (magnitude <= joy_linear_axis_deadzone_) {
-                    return 0.0;
-                }
-                const size_t level =
-                    magnitude <= joy_linear_axis_thresholds_[0] ? 0 :
-                    magnitude <= joy_linear_axis_thresholds_[1] ? 1 : 2;
-                return std::copysign(joy_linear_speed_levels_[level],
-                                     static_cast<double>(axis));
-            };
             cmd_vel_[0] = static_cast<float>(std::clamp(
-                map_linear_axis(msg->axes[4]), clip_cmd_[0], clip_cmd_[1]));
+                map_joy_linear_axis_locked(
+                    msg->axes[4], joy_longitudinal_level_,
+                    joy_linear_speed_levels_, joy_backward_speed_levels_),
+                clip_cmd_[0], clip_cmd_[1]));
             cmd_vel_[1] = static_cast<float>(std::clamp(
-                map_linear_axis(msg->axes[3]), clip_cmd_[2], clip_cmd_[3]));
+                map_joy_linear_axis_locked(
+                    msg->axes[3], joy_lateral_level_, joy_linear_speed_levels_,
+                    joy_linear_speed_levels_),
+                clip_cmd_[2], clip_cmd_[3]));
             if (msg->axes[2] < 0) {
                 cmd_vel_[2] = std::clamp(-msg->axes[2] * clip_cmd_[5], clip_cmd_[4], clip_cmd_[5]);
             } else if (msg->axes[5] < 0) {
@@ -1122,7 +1188,7 @@ void InferenceNode::subs_joy_callback(const std::shared_ptr<sensor_msgs::msg::Jo
         is_joy_control_.store(!is_joy_control_);
         {
             std::unique_lock<std::mutex> lock(cmd_mutex_);
-            std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+            clear_velocity_command_locked();
         }
         if (run_logger_) {
             run_logger_->record_event(
@@ -1267,7 +1333,7 @@ void InferenceNode::check_joy_watchdog() {
 
     {
         std::unique_lock<std::mutex> lock(cmd_mutex_);
-        std::fill(cmd_vel_.begin(), cmd_vel_.end(), 0.0f);
+        clear_velocity_command_locked();
     }
     if (!joy_watchdog_timed_out_.exchange(true)) {
         if (run_logger_) {
