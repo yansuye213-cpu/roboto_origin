@@ -290,7 +290,7 @@ motor_zero_offset:
 ./tools/start_robot.sh --robot rpo --policy default --camera
 ```
 
-相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数可在 `src/camera/launch/d455.launch.py` 中调整。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
+相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数位于 `src/camera/config/d455.yaml`。启动脚本会先启动相机并等待 RGB/Depth 首帧；相机失败时只停止自己的 `camera_session`，不会影响推理或手柄。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
 
 `./tools/start_robot.sh` 会自动执行 `colcon build --symlink-install` 编译工作空间，并在后台启动以下 `screen` 会话：
 

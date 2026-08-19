@@ -8,6 +8,9 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
+    default_config = Path(
+        get_package_share_directory("roboparty_camera")
+    ) / "config" / "d455.yaml"
     realsense_launch = Path(
         get_package_share_directory("realsense2_camera")
     ) / "launch" / "rs_launch.py"
@@ -15,26 +18,14 @@ def generate_launch_description():
     arguments = {
         "camera_namespace": LaunchConfiguration("camera_namespace"),
         "camera_name": LaunchConfiguration("camera_name"),
-        "serial_no": LaunchConfiguration("serial_no"),
-        "enable_color": "true",
-        "enable_depth": "true",
-        "rgb_camera.color_profile": LaunchConfiguration("color_profile"),
-        "depth_module.depth_profile": LaunchConfiguration("depth_profile"),
-        "enable_sync": "true",
-        "align_depth.enable": "true",
-        "pointcloud.enable": "false",
-        "enable_gyro": "false",
-        "enable_accel": "false",
-        "publish_tf": "true",
+        "config_file": LaunchConfiguration("config_file"),
     }
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("camera_namespace", default_value="camera"),
             DeclareLaunchArgument("camera_name", default_value="d455"),
-            DeclareLaunchArgument("serial_no", default_value="_245022302750"),
-            DeclareLaunchArgument("color_profile", default_value="640x480x15"),
-            DeclareLaunchArgument("depth_profile", default_value="640x480x15"),
+            DeclareLaunchArgument("config_file", default_value=str(default_config)),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(realsense_launch)),
                 launch_arguments=arguments.items(),

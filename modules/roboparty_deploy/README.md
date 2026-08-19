@@ -290,7 +290,7 @@ Add `--camera` to start the head-mounted D455 with serial number `245022302750`:
 ./tools/start_robot.sh --robot rpo --policy default --camera
 ```
 
-The camera publishes RGB and aligned depth at `640x480@15` by default, with the point cloud and camera IMU disabled. Adjust these settings in `src/camera/launch/d455.launch.py`. Until the head mounting transform is calibrated, this package publishes only the internal RealSense TF tree.
+The camera publishes RGB and aligned depth at `640x480@15` by default, with the point cloud and camera IMU disabled. Settings live in `src/camera/config/d455.yaml`. The startup script launches the camera first and waits for one RGB and one depth frame; a camera failure only stops its own `camera_session` and does not affect inference or the joystick. Until the head mounting transform is calibrated, this package publishes only the internal RealSense TF tree.
 
 `./tools/start_robot.sh` automatically runs `colcon build --symlink-install` to build the workspace and starts the following `screen` sessions in the background:
 

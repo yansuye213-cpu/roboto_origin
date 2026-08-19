@@ -189,6 +189,49 @@ start_component() {
     print_success "$session_name 已启动，检测到 $node_name 节点。"
 }
 
+# 启动不应影响推理和手柄的可选组件，并检查它是否真的开始发布数据。
+wait_for_topic_message() {
+    local topic=$1
+    local timeout_sec=${2:-8}
+
+    timeout "${timeout_sec}s" ros2 topic echo \
+        --qos-reliability best_effort \
+        --qos-durability volatile \
+        --once "$topic" >/dev/null 2>&1
+}
+
+start_camera_component() {
+    local color_topic="/camera/d455/color/image_raw"
+    local depth_topic="/camera/d455/aligned_depth_to_color/image_raw"
+
+    print_info "启动 camera_session ..."
+    screen -dmS camera_session bash -c "source install/setup.bash; export RMW_IMPLEMENTATION='$RMW_IMPLEMENTATION'; export RMW_FASTRTPS_USE_QOS_FROM_XML='$RMW_FASTRTPS_USE_QOS_FROM_XML'; export FASTRTPS_DEFAULT_PROFILES_FILE='$FASTRTPS_DEFAULT_PROFILES_FILE'; ros2 launch roboparty_camera d455.launch.py; exec bash"
+
+    print_info "等待相机节点（最多 15 秒）..."
+    if ! wait_for_node "d455" 15; then
+        print_error "相机节点未启动，继续启动推理和手柄。"
+        screen -S camera_session -X quit 2>/dev/null
+        return 1
+    fi
+
+    print_info "等待 RGB 首帧..."
+    if ! wait_for_topic_message "$color_topic" 8; then
+        print_error "RGB 话题未收到数据，继续启动推理和手柄。"
+        screen -S camera_session -X quit 2>/dev/null
+        return 1
+    fi
+
+    print_info "等待深度首帧..."
+    if ! wait_for_topic_message "$depth_topic" 8; then
+        print_error "深度话题未收到数据，继续启动推理和手柄。"
+        screen -S camera_session -X quit 2>/dev/null
+        return 1
+    fi
+
+    print_success "相机节点和 RGB/Depth 首帧检查通过。"
+    return 0
+}
+
 # 函数：清理所有会话
 cleanup_sessions() {
     screen -S inference_session -X quit 2>/dev/null
@@ -367,13 +410,19 @@ source install/setup.bash
 print_info "停止现有相关screen会话..."
 cleanup_sessions
 
-start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 15
-start_component "joy_session" "ros2 run joy joy_node" "joy_node" 15
+CAMERA_HEALTHY=0
 if [ "$CAMERA_ON_START" -eq 1 ]; then
-    start_component "camera_session" "ros2 launch roboparty_camera d455.launch.py" "d455" 30
+    if start_camera_component; then
+        CAMERA_HEALTHY=1
+    else
+        print_info "相机保持独立失败状态；其他机器人组件不受影响。"
+    fi
 else
     print_info "相机启动已关闭；使用 --camera 可启用 D455。"
 fi
+
+start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 15
+start_component "joy_session" "ros2 run joy joy_node" "joy_node" 15
 
 # 验证节点的 DDS 配置
 verify_dds_effectiveness
@@ -384,15 +433,17 @@ print_success "所有组件已在后台成功启动！"
 print_success "使用以下命令查看各组件输出："
 print_success "推理模块: screen -r inference_session"
 print_success "手柄控制: screen -r joy_session"
-if [ "$CAMERA_ON_START" -eq 1 ]; then
+if [ "$CAMERA_HEALTHY" -eq 1 ]; then
     print_success "D455 相机: screen -r camera_session"
+elif [ "$CAMERA_ON_START" -eq 1 ]; then
+    print_info "D455 相机未通过首帧检查，未保持 camera_session。"
 fi
 print_success "----------------------------------------"
 print_info "若要退出某个screen会话，按Ctrl+A然后按D"
 print_info "使用以下命令停止所有组件："
 print_info "screen -S inference_session -X quit"
 print_info "screen -S joy_session -X quit"
-if [ "$CAMERA_ON_START" -eq 1 ]; then
+if [ "$CAMERA_HEALTHY" -eq 1 ]; then
     print_info "screen -S camera_session -X quit"
 fi
 print_success "----------------------------------------"
