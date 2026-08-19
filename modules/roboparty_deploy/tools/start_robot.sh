@@ -25,11 +25,11 @@ show_usage() {
     echo "用法: $0 [--robot ROBOT] [--policy POLICY] [--camera|--no-camera] [--build|--no-build]"
     echo "      $0 [ROBOT] [POLICY]"
     echo
-    echo "默认: robot=rpo, policy=default, camera=off, build=on"
+    echo "默认: robot=rpo, policy=default, camera=on, build=on"
     echo "示例: $0 --robot rpo --policy amp"
     echo "示例: $0 rpo beyondmimic"
     echo "示例: $0 --robot rpo --policy default --no-build"
-    echo "示例: $0 --robot rpo --policy default --camera"
+    echo "示例: $0 --robot rpo --policy default --no-camera"
 }
 
 validate_name() {
@@ -45,7 +45,7 @@ validate_name() {
 ROBOT="rpo"
 POLICY="default"
 BUILD_ON_START=1
-CAMERA_ON_START=0
+CAMERA_ON_START=1
 ROBOT_SET=0
 POLICY_SET=0
 
@@ -418,7 +418,7 @@ if [ "$CAMERA_ON_START" -eq 1 ]; then
         print_info "相机保持独立失败状态；其他机器人组件不受影响。"
     fi
 else
-    print_info "相机启动已关闭；使用 --camera 可启用 D455。"
+    print_info "相机启动已通过 --no-camera 关闭。"
 fi
 
 start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 15

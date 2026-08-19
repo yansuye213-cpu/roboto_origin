@@ -277,17 +277,17 @@ Once everything is ready, run the script to start the software:
 ./tools/start_robot.sh
 ```
 
-By default, this starts the `default` policy for the `rpo` robot. You can also select the robot and policy explicitly:
+By default, this starts the head-mounted D455, the `default` inference node for the `rpo` robot, and the joystick node. Policy control still starts only after pressing `B` on the gamepad. You can also select the robot and policy explicitly:
 
 ```bash
 ./tools/start_robot.sh --robot rpo --policy amp
 ./tools/start_robot.sh rpo beyondmimic
 ```
 
-Add `--camera` to start the head-mounted D455 with serial number `245022302750`:
+Add `--no-camera` to temporarily disable the head-mounted D455 with serial number `245022302750`:
 
 ```bash
-./tools/start_robot.sh --robot rpo --policy default --camera
+./tools/start_robot.sh --robot rpo --policy default --no-camera
 ```
 
 The camera publishes RGB and aligned depth at `640x480@15` by default, with the point cloud and camera IMU disabled. Settings live in `src/camera/config/d455.yaml`. The startup script launches the camera first and waits for one RGB and one depth frame; a camera failure only stops its own `camera_session` and does not affect inference or the joystick. Until the head mounting transform is calibrated, this package publishes only the internal RealSense TF tree.
@@ -296,7 +296,7 @@ The camera publishes RGB and aligned depth at `640x480@15` by default, with the 
 
 - `inference_session`: inference node
 - `joy_session`: joystick node
-- `camera_session`: D455 node (only with `--camera`)
+- `camera_session`: D455 node (enabled by default; disabled with `--no-camera`)
 
 Use the following commands to inspect their output:
 

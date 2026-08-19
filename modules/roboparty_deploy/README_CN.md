@@ -277,17 +277,17 @@ motor_zero_offset:
 ./tools/start_robot.sh
 ```
 
-默认会启动 `rpo` 机器人的 `default` 策略。也可以显式选择机器人和策略：
+默认会启动头部 D455、`rpo` 机器人的 `default` 推理节点和手柄节点；策略控制仍需按手柄 `B` 才开始。也可以显式选择机器人和策略：
 
 ```bash
 ./tools/start_robot.sh --robot rpo --policy amp
 ./tools/start_robot.sh rpo beyondmimic
 ```
 
-使用这台头部 D455（序列号 `245022302750`）时，增加 `--camera`：
+如需临时关闭头部 D455（序列号 `245022302750`），增加 `--no-camera`：
 
 ```bash
-./tools/start_robot.sh --robot rpo --policy default --camera
+./tools/start_robot.sh --robot rpo --policy default --no-camera
 ```
 
 相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数位于 `src/camera/config/d455.yaml`。启动脚本会先启动相机并等待 RGB/Depth 首帧；相机失败时只停止自己的 `camera_session`，不会影响推理或手柄。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
@@ -296,7 +296,7 @@ motor_zero_offset:
 
 - `inference_session`：推理节点
 - `joy_session`：手柄节点
-- `camera_session`：D455 节点（仅使用 `--camera` 时启动）
+- `camera_session`：D455 节点（默认启动，使用 `--no-camera` 时关闭）
 
 可使用以下命令查看后台输出：
 
@@ -804,14 +804,120 @@ URDF 限位，也不放宽策略目标夹紧范围。越界超过该容差时，
 7. RSB 进入 policy 默认姿态，确认姿态与训练默认姿态一致
 8. 确认 IMU 正常后，再按 B 开始推理
 ```
+
+### 9. ASUS 主控速记命令
+
+以下命令均在 ASUS 机器人主控（Ubuntu 22.04）上执行。
+
+进入部署目录并加载 ROS 2 Humble 环境：
+
+```bash
 cd ~/Project/roboparty_xlong/roboto_origin/modules/roboparty_deploy
 source /opt/ros/humble/setup.bash
-source install/setup.bash
-./tools/start_robot.sh --robot rpo --policy default
+```
 
+拉取或切换到本分支后，先编译一次，并更新 systemd 中保存的服务文件副本：
+
+```bash
+colcon build --base-paths src --symlink-install
+source install/setup.bash
+sudo install -m 0644 tools/roboparty.service /etc/systemd/system/roboparty.service
+sudo systemctl daemon-reload
+```
+
+自启动配置中 `BUILD_ON_START=0`，因此源码有变化时必须先手动编译，不能只重启服务。
+
+查看自启动服务是否已启用、当前是否正在运行，以及相机自启动开关：
+
+```bash
+systemctl is-enabled roboparty.service
+systemctl is-active roboparty.service
+systemctl status roboparty.service --no-pager
+grep -E '^(AUTOSTART_ENABLED|BUILD_ON_START|CAMERA_ENABLED)=' tools/roboparty-autostart.conf
+```
+
+只有同时满足以下条件，开机时才会启动相机：
+
+- `roboparty.service` 显示 `enabled`
+- `roboparty-autostart.conf` 中 `AUTOSTART_ENABLED=1`
+- `roboparty-autostart.conf` 中 `CAMERA_ENABLED=1`
+- 工作空间已经编译，存在 `install/setup.bash`
+
+查看已经启动的后台会话和 ROS 2 节点：
+
+```bash
+screen -ls
+ros2 node list
+```
+
+查看各组件日志；进入后按 `Ctrl+A`，再按 `D`，只会退出查看界面，节点仍在后台运行：
+
+```bash
+screen -r inference_session
+screen -r joy_session
+screen -r camera_session
+```
+
+停止由自启动服务管理的全部机器人节点（推理、手柄、相机）：
+
+```bash
+sudo systemctl stop roboparty.service
+```
+
+停止并禁止下次开机自启动：
+
+```bash
+sudo systemctl disable --now roboparty.service
+```
+
+重新启用开机自启动并立即启动：
+
+```bash
+sudo systemctl enable --now roboparty.service
+```
+
+重启全部机器人节点：
+
+```bash
+sudo systemctl restart roboparty.service
+```
+
+只停止某个后台组件，不改变开机自启动配置：
+
+```bash
+screen -S camera_session -X quit
+screen -S joy_session -X quit
+screen -S inference_session -X quit
+```
+
+只停止相机后，服务不会立刻把它拉起；但下次重启 `roboparty.service` 或重新开机时，
+由于 `CAMERA_ENABLED=1`，相机仍会自动启动。
+
+查看本次开机的自启动日志：
+
+```bash
+journalctl -u roboparty.service -b --no-pager
+```
+
+手动完整启动（包含 D455，相机会保持独立，策略仍需按手柄 `B` 才开始）：
+
+```bash
+./tools/start_robot.sh
+```
+
+手动执行 `./tools/start_robot.sh` 时，相机默认启动；只有增加 `--no-camera` 才会关闭。
+自启动脚本仍根据 `CAMERA_ENABLED` 显式控制相机，目前配置为 `CAMERA_ENABLED=1`。
+
+从开发电脑连接 ASUS 主控：
+
+```bash
 sudo nmcli con up limrobot-direct
 ssh limrobot@192.168.55.2
+```
 
+在开发电脑运行 MuJoCo sim2sim：
+
+```bash
 source /home/yansuye/miniconda3/bin/activate
 conda activate mujoco
 
@@ -819,3 +925,4 @@ cd /home/yansuye/Projects/RoboParty/roboto_origin/modules/roboparty_train
 
 python robolab/scripts/mujoco/sim2sim_rpo_onnx.py \
   --load_model ../roboparty_deploy/src/inference/robots/rpo/models/policy.onnx
+```
