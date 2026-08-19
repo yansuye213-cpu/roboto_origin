@@ -22,13 +22,14 @@ print_error() {
 }
 
 show_usage() {
-    echo "用法: $0 [--robot ROBOT] [--policy POLICY] [--build|--no-build]"
+    echo "用法: $0 [--robot ROBOT] [--policy POLICY] [--camera|--no-camera] [--build|--no-build]"
     echo "      $0 [ROBOT] [POLICY]"
     echo
-    echo "默认: robot=rpo, policy=default, build=on"
+    echo "默认: robot=rpo, policy=default, camera=off, build=on"
     echo "示例: $0 --robot rpo --policy amp"
     echo "示例: $0 rpo beyondmimic"
     echo "示例: $0 --robot rpo --policy default --no-build"
+    echo "示例: $0 --robot rpo --policy default --camera"
 }
 
 validate_name() {
@@ -44,6 +45,7 @@ validate_name() {
 ROBOT="rpo"
 POLICY="default"
 BUILD_ON_START=1
+CAMERA_ON_START=0
 ROBOT_SET=0
 POLICY_SET=0
 
@@ -75,6 +77,14 @@ while [ $# -gt 0 ]; do
             ;;
         --no-build)
             BUILD_ON_START=0
+            shift
+            ;;
+        --camera)
+            CAMERA_ON_START=1
+            shift
+            ;;
+        --no-camera)
+            CAMERA_ON_START=0
             shift
             ;;
         --help|-h)
@@ -183,6 +193,7 @@ start_component() {
 cleanup_sessions() {
     screen -S inference_session -X quit 2>/dev/null
     screen -S joy_session -X quit 2>/dev/null
+    screen -S camera_session -X quit 2>/dev/null
 }
 
 # 函数：详细验证 DDS 配置是否生效
@@ -358,6 +369,11 @@ cleanup_sessions
 
 start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 15
 start_component "joy_session" "ros2 run joy joy_node" "joy_node" 15
+if [ "$CAMERA_ON_START" -eq 1 ]; then
+    start_component "camera_session" "ros2 launch roboparty_camera d455.launch.py" "d455" 30
+else
+    print_info "相机启动已关闭；使用 --camera 可启用 D455。"
+fi
 
 # 验证节点的 DDS 配置
 verify_dds_effectiveness
@@ -368,11 +384,17 @@ print_success "所有组件已在后台成功启动！"
 print_success "使用以下命令查看各组件输出："
 print_success "推理模块: screen -r inference_session"
 print_success "手柄控制: screen -r joy_session"
+if [ "$CAMERA_ON_START" -eq 1 ]; then
+    print_success "D455 相机: screen -r camera_session"
+fi
 print_success "----------------------------------------"
 print_info "若要退出某个screen会话，按Ctrl+A然后按D"
 print_info "使用以下命令停止所有组件："
 print_info "screen -S inference_session -X quit"
 print_info "screen -S joy_session -X quit"
+if [ "$CAMERA_ON_START" -eq 1 ]; then
+    print_info "screen -S camera_session -X quit"
+fi
 print_success "----------------------------------------"
 print_info "手柄控制说明:"
 print_info "X键: 使能/失能电机"

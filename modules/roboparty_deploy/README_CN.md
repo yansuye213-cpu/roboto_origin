@@ -47,6 +47,15 @@
    sudo apt install -y ros-humble-joy
    ```
 
+   若需使用头部 RealSense D455，还需先安装 RealSense SDK，并安装 ROS2 wrapper：
+
+   ```bash
+   sudo apt install -y \
+     ros-humble-realsense2-camera \
+     ros-humble-realsense2-camera-msgs \
+     ros-humble-realsense2-description
+   ```
+
 4. 若需使用仓库中的 Python 脚本（如 `scripts/set_zero.py`），还需安装对应 Python 依赖：
 
    ```bash
@@ -275,16 +284,26 @@ motor_zero_offset:
 ./tools/start_robot.sh rpo beyondmimic
 ```
 
-`./tools/start_robot.sh` 会自动执行 `colcon build --symlink-install` 编译工作空间，并在后台启动以下两个 `screen` 会话：
+使用这台头部 D455（序列号 `245022302750`）时，增加 `--camera`：
+
+```bash
+./tools/start_robot.sh --robot rpo --policy default --camera
+```
+
+相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数可在 `src/camera/launch/d455.launch.py` 中调整。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
+
+`./tools/start_robot.sh` 会自动执行 `colcon build --symlink-install` 编译工作空间，并在后台启动以下 `screen` 会话：
 
 - `inference_session`：推理节点
 - `joy_session`：手柄节点
+- `camera_session`：D455 节点（仅使用 `--camera` 时启动）
 
 可使用以下命令查看后台输出：
 
 ```bash
 screen -r inference_session
 screen -r joy_session
+screen -r camera_session
 ```
 
 可使用以下命令停止对应后台组件：
@@ -292,6 +311,7 @@ screen -r joy_session
 ```bash
 screen -S inference_session -X quit
 screen -S joy_session -X quit
+screen -S camera_session -X quit
 ```
 
 如果需要切换不同的策略模型，可以通过 `policy` 参数选择 `src/inference/robots/rpo/configs/` 下的配置：

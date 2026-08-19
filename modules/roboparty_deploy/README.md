@@ -47,6 +47,15 @@ For controller connection methods and related resources, see [Orange Pi 5 Plus W
    sudo apt install -y ros-humble-joy
    ```
 
+   To use the head-mounted RealSense D455, install the RealSense SDK first and then install the ROS2 wrapper:
+
+   ```bash
+   sudo apt install -y \
+     ros-humble-realsense2-camera \
+     ros-humble-realsense2-camera-msgs \
+     ros-humble-realsense2-description
+   ```
+
 4. If you want to use the Python scripts in this repository (such as `scripts/set_zero.py`), also install the required Python dependencies:
 
    ```bash
@@ -275,16 +284,26 @@ By default, this starts the `default` policy for the `rpo` robot. You can also s
 ./tools/start_robot.sh rpo beyondmimic
 ```
 
-`./tools/start_robot.sh` automatically runs `colcon build --symlink-install` to build the workspace and starts the following two `screen` sessions in the background:
+Add `--camera` to start the head-mounted D455 with serial number `245022302750`:
+
+```bash
+./tools/start_robot.sh --robot rpo --policy default --camera
+```
+
+The camera publishes RGB and aligned depth at `640x480@15` by default, with the point cloud and camera IMU disabled. Adjust these settings in `src/camera/launch/d455.launch.py`. Until the head mounting transform is calibrated, this package publishes only the internal RealSense TF tree.
+
+`./tools/start_robot.sh` automatically runs `colcon build --symlink-install` to build the workspace and starts the following `screen` sessions in the background:
 
 - `inference_session`: inference node
 - `joy_session`: joystick node
+- `camera_session`: D455 node (only with `--camera`)
 
 Use the following commands to inspect their output:
 
 ```bash
 screen -r inference_session
 screen -r joy_session
+screen -r camera_session
 ```
 
 Use the following commands to stop the corresponding background components:
@@ -292,6 +311,7 @@ Use the following commands to stop the corresponding background components:
 ```bash
 screen -S inference_session -X quit
 screen -S joy_session -X quit
+screen -S camera_session -X quit
 ```
 
 If you need to switch to a different policy model, pass the `policy` argument. It selects a config from `src/inference/robots/rpo/configs/`:
