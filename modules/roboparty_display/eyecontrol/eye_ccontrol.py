@@ -18,8 +18,14 @@ pygame.init()
 
 # 设置HDMI输出 - 使用全屏模式
 screen_info = pygame.display.Info()
-screen_width, screen_height = screen_info.current_w, screen_info.current_h
-screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN)
+output_width, output_height = screen_info.current_w, screen_info.current_h
+output_screen = pygame.display.set_mode((output_width, output_height), pygame.FULLSCREEN)
+
+# 在正方形画布上绘制，再缩放到实际输出。640x480信号被方形屏拉伸后，
+# 这里产生的横向补偿会抵消屏幕的纵向拉伸，使眼睛恢复为圆形。
+logical_size = min(output_width, output_height)
+screen_width = screen_height = logical_size
+screen = pygame.Surface((screen_width, screen_height)).convert()
 pygame.mouse.set_visible(False)  # 隐藏光标
 pygame.display.set_caption("DOLY Eye HDMI")
 
@@ -350,6 +356,10 @@ while running:
     # blink_text = font.render(f"Blink Status: {blink_status}", True, (255, 255, 255))
     # screen.blit(blink_text, (20, 100))
     
+    # 将正方形逻辑画布拉伸到实际输出，补偿640x480到方形屏的变形
+    output_frame = pygame.transform.smoothscale(screen, (output_width, output_height))
+    output_screen.blit(output_frame, (0, 0))
+
     # 更新屏幕
     pygame.display.flip()
     
