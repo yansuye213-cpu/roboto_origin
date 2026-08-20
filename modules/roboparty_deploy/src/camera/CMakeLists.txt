@@ -8,4 +8,10 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+  PROGRAMS scripts/roboparty_camera_web.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME camera_web_server
+)
+
 ament_package()

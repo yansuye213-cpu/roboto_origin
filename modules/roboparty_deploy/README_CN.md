@@ -59,7 +59,7 @@
 4. 若需使用仓库中的 Python 脚本（如 `scripts/set_zero.py`），还需安装对应 Python 依赖：
 
    ```bash
-   sudo apt install -y python3-yaml python3-numpy
+   sudo apt install -y python3-yaml python3-numpy python3-opencv
    ```
 
 5. 接着拉取部署代码：
@@ -290,13 +290,14 @@ motor_zero_offset:
 ./tools/start_robot.sh --robot rpo --policy default --no-camera
 ```
 
-相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数位于 `src/camera/config/d455.yaml`。启动脚本会先启动相机并等待 RGB/Depth 首帧；相机失败时只停止自己的 `camera_session`，不会影响推理或手柄。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
+相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数位于 `src/camera/config/d455.yaml`。启动脚本会先启动相机并等待 RGB/Depth 首帧；相机失败时只停止自己的 `camera_session`，不会影响推理或手柄。相机还会顺带启动一个独立的网页服务 `camera_web_session`，默认监听 `8080` 端口。打开 `http://<ASUS-IP>:8080/` 可以实时看 RGB，点击 `Capture` 或按 `C` 会在主机本地保存一份 RGB + depth 抓拍包，同时浏览器也会下载同一份 `zip`。如果只想单独测试网页服务，可以在工作空间里执行 `ros2 launch roboparty_camera web.launch.py`。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
 
 `./tools/start_robot.sh` 会自动执行 `colcon build --symlink-install` 编译工作空间，并在后台启动以下 `screen` 会话：
 
 - `inference_session`：推理节点
 - `joy_session`：手柄节点
 - `camera_session`：D455 节点（默认启动，使用 `--no-camera` 时关闭）
+- `camera_web_session`：相机网页服务（默认随相机一起启动）
 
 可使用以下命令查看后台输出：
 
@@ -304,6 +305,7 @@ motor_zero_offset:
 screen -r inference_session
 screen -r joy_session
 screen -r camera_session
+screen -r camera_web_session
 ```
 
 可使用以下命令停止对应后台组件：
@@ -312,6 +314,7 @@ screen -r camera_session
 screen -S inference_session -X quit
 screen -S joy_session -X quit
 screen -S camera_session -X quit
+screen -S camera_web_session -X quit
 ```
 
 如果需要切换不同的策略模型，可以通过 `policy` 参数选择 `src/inference/robots/rpo/configs/` 下的配置：
@@ -856,9 +859,10 @@ ros2 node list
 screen -r inference_session
 screen -r joy_session
 screen -r camera_session
+screen -r camera_web_session
 ```
 
-停止由自启动服务管理的全部机器人节点（推理、手柄、相机）：
+停止由自启动服务管理的全部机器人节点（推理、手柄、相机与网页服务）：
 
 ```bash
 sudo systemctl stop roboparty.service
@@ -888,6 +892,7 @@ sudo systemctl restart roboparty.service
 screen -S camera_session -X quit
 screen -S joy_session -X quit
 screen -S inference_session -X quit
+screen -S camera_web_session -X quit
 ```
 
 只停止相机后，服务不会立刻把它拉起；但下次重启 `roboparty.service` 或重新开机时，

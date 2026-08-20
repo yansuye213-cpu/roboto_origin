@@ -189,6 +189,27 @@ start_component() {
     print_success "$session_name 已启动，检测到 $node_name 节点。"
 }
 
+# 启动可选组件；如果它没起来，只做告警，不影响推理和手柄。
+start_optional_component() {
+    local session_name=$1
+    local launch_cmd=$2
+    local node_name=$3
+    local startup_timeout=${4:-10}
+
+    print_info "启动 $session_name ..."
+    screen -dmS $session_name bash -c "source install/setup.bash; export RMW_IMPLEMENTATION='$RMW_IMPLEMENTATION'; export RMW_FASTRTPS_USE_QOS_FROM_XML='$RMW_FASTRTPS_USE_QOS_FROM_XML'; export FASTRTPS_DEFAULT_PROFILES_FILE='$FASTRTPS_DEFAULT_PROFILES_FILE'; $launch_cmd; exec bash"
+
+    print_info "等待 $node_name 节点（最多 ${startup_timeout} 秒）..."
+    if ! wait_for_node "$node_name" "$startup_timeout"; then
+        print_error "$session_name 启动失败，继续保留机器人主链路。"
+        screen -S "$session_name" -X quit 2>/dev/null
+        return 1
+    fi
+
+    print_success "$session_name 已启动，检测到 $node_name 节点。"
+    return 0
+}
+
 # 启动不应影响推理和手柄的可选组件，并检查它是否真的开始发布数据。
 wait_for_topic_message() {
     local topic=$1
@@ -237,6 +258,7 @@ cleanup_sessions() {
     screen -S inference_session -X quit 2>/dev/null
     screen -S joy_session -X quit 2>/dev/null
     screen -S camera_session -X quit 2>/dev/null
+    screen -S camera_web_session -X quit 2>/dev/null
 }
 
 # 函数：详细验证 DDS 配置是否生效
@@ -411,9 +433,13 @@ print_info "停止现有相关screen会话..."
 cleanup_sessions
 
 CAMERA_HEALTHY=0
+CAMERA_WEB_HEALTHY=0
 if [ "$CAMERA_ON_START" -eq 1 ]; then
     if start_camera_component; then
         CAMERA_HEALTHY=1
+        if start_optional_component "camera_web_session" "ros2 launch roboparty_camera web.launch.py" "camera_web_server" 10; then
+            CAMERA_WEB_HEALTHY=1
+        fi
     else
         print_info "相机保持独立失败状态；其他机器人组件不受影响。"
     fi
@@ -435,6 +461,9 @@ print_success "推理模块: screen -r inference_session"
 print_success "手柄控制: screen -r joy_session"
 if [ "$CAMERA_HEALTHY" -eq 1 ]; then
     print_success "D455 相机: screen -r camera_session"
+    if [ "$CAMERA_WEB_HEALTHY" -eq 1 ]; then
+        print_success "D455 相机网页: screen -r camera_web_session"
+    fi
 elif [ "$CAMERA_ON_START" -eq 1 ]; then
     print_info "D455 相机未通过首帧检查，未保持 camera_session。"
 fi
@@ -445,6 +474,9 @@ print_info "screen -S inference_session -X quit"
 print_info "screen -S joy_session -X quit"
 if [ "$CAMERA_HEALTHY" -eq 1 ]; then
     print_info "screen -S camera_session -X quit"
+    if [ "$CAMERA_WEB_HEALTHY" -eq 1 ]; then
+        print_info "screen -S camera_web_session -X quit"
+    fi
 fi
 print_success "----------------------------------------"
 print_info "手柄控制说明:"
@@ -457,3 +489,11 @@ print_info "LSB(左摇杆按下): 进入/退出站立模式"
 print_info "RB键: 切换运动序列(在beyondmimic模式下可用)"
 print_info "右摇杆: 控制前后左右移动"
 print_info "LT/RT: 控制转向(左/右旋转)"
+if [ "$CAMERA_WEB_HEALTHY" -eq 1 ]; then
+    local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -n "$local_ip" ]; then
+        print_info "相机网页: http://${local_ip}:8080/"
+    else
+        print_info "相机网页: http://<ASUS-IP>:8080/"
+    fi
+fi

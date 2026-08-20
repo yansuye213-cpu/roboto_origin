@@ -17,6 +17,7 @@ ExecStart=/home/limrobot/Project/roboparty_xlong/roboto_origin/modules/roboparty
 ExecStop=-/usr/bin/screen -S inference_session -X quit
 ExecStop=-/usr/bin/screen -S joy_session -X quit
 ExecStop=-/usr/bin/screen -S camera_session -X quit
+ExecStop=-/usr/bin/screen -S camera_web_session -X quit
 
 RemainAfterExit=yes
 Restart=on-failure

@@ -59,7 +59,7 @@ For controller connection methods and related resources, see [Orange Pi 5 Plus W
 4. If you want to use the Python scripts in this repository (such as `scripts/set_zero.py`), also install the required Python dependencies:
 
    ```bash
-   sudo apt install -y python3-yaml python3-numpy
+   sudo apt install -y python3-yaml python3-numpy python3-opencv
    ```
 
 5. Next, clone the deployment code:
@@ -290,13 +290,14 @@ Add `--no-camera` to temporarily disable the head-mounted D455 with serial numbe
 ./tools/start_robot.sh --robot rpo --policy default --no-camera
 ```
 
-The camera publishes RGB and aligned depth at `640x480@15` by default, with the point cloud and camera IMU disabled. Settings live in `src/camera/config/d455.yaml`. The startup script launches the camera first and waits for one RGB and one depth frame; a camera failure only stops its own `camera_session` and does not affect inference or the joystick. Until the head mounting transform is calibrated, this package publishes only the internal RealSense TF tree.
+The camera publishes RGB and aligned depth at `640x480@15` by default, with the point cloud and camera IMU disabled. Settings live in `src/camera/config/d455.yaml`. The startup script launches the camera first and waits for one RGB and one depth frame; a camera failure only stops its own `camera_session` and does not affect inference or the joystick. The camera also starts an independent `camera_web_session` on port `8080`. Open `http://<ASUS-IP>:8080/` to view the live RGB stream; click `Capture` or press `C` to save a local RGB + depth snapshot bundle on the robot and download the same zip from the browser. If you only want to test the web service by itself, run `ros2 launch roboparty_camera web.launch.py` inside the workspace. Until the head mounting transform is calibrated, this package publishes only the internal RealSense TF tree.
 
 `./tools/start_robot.sh` automatically runs `colcon build --symlink-install` to build the workspace and starts the following `screen` sessions in the background:
 
 - `inference_session`: inference node
 - `joy_session`: joystick node
 - `camera_session`: D455 node (enabled by default; disabled with `--no-camera`)
+- `camera_web_session`: camera web service (starts with the camera)
 
 Use the following commands to inspect their output:
 
@@ -304,6 +305,7 @@ Use the following commands to inspect their output:
 screen -r inference_session
 screen -r joy_session
 screen -r camera_session
+screen -r camera_web_session
 ```
 
 Use the following commands to stop the corresponding background components:
@@ -312,6 +314,7 @@ Use the following commands to stop the corresponding background components:
 screen -S inference_session -X quit
 screen -S joy_session -X quit
 screen -S camera_session -X quit
+screen -S camera_web_session -X quit
 ```
 
 If you need to switch to a different policy model, pass the `policy` argument. It selects a config from `src/inference/robots/rpo/configs/`:
