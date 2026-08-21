@@ -290,7 +290,7 @@ motor_zero_offset:
 ./tools/start_robot.sh --robot rpo --policy default --no-camera
 ```
 
-相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数位于 `src/camera/config/d455.yaml`。启动脚本会先启动相机并等待 RGB/Depth 首帧；相机失败时只停止自己的 `camera_session`，不会影响推理或手柄。相机还会顺带启动一个独立的网页服务 `camera_web_session`，默认监听 `8080` 端口。打开 `http://<ASUS-IP>:8080/` 可以实时看 RGB，点击 `Capture` 或按 `C` 会在主机本地保存一份 RGB + depth 抓拍包，同时浏览器也会下载同一份 `zip`。如果只想单独测试网页服务，可以在工作空间里执行 `ros2 launch roboparty_camera web.launch.py`。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
+相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数位于 `src/camera/config/d455.yaml`。启动脚本会先启动相机并等待 RGB/Depth 首帧；相机失败时只停止自己的 `camera_session`，不会影响推理或手柄。相机还会顺带启动一个独立的网页服务 `camera_web_session`，默认监听 `8080` 端口。打开 `http://<ASUS-IP>:8080/` 可以实时看 RGB，点击 `Capture JPEG` 或按 `C` 会把当前 RGB 帧以 JPEG 保存到主机的 `~/图片/limrobot_camera/`，同时浏览器也会下载同一张图片。网页文件位于 `src/camera/web/index.html`，网页服务不订阅或保存深度数据；深度话题仍由 D455 节点正常发布。如果只想单独测试网页服务，可以在工作空间里执行 `ros2 launch roboparty_camera web.launch.py`。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
 
 `./tools/start_robot.sh` 会自动执行 `colcon build --symlink-install` 编译工作空间，并在后台启动以下 `screen` 会话：
 
