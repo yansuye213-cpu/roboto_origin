@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RoboParty Vision</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b0e;
+      --surface: #14181d;
+      --border: #2a3038;
+      --text: #f2f5f7;
+      --muted: #9da8b3;
+      --live: #33d17a;
+      --action: #f4f6f8;
+      --action-text: #111418;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: grid;
+      grid-template-rows: 56px minmax(0, 1fr);
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    h1 { margin: 0; font-size: 16px; font-weight: 650; }
+    main { min-height: 0; }
+    .viewer {
+      height: 100%;
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) 68px;
+    }
+    .stage {
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+    .frame { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 20px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #69727d; }
+    .status.ready .status-dot {
+      background: var(--live);
+      box-shadow: 0 0 0 3px rgb(51 209 122 / 14%);
+    }
+    .capture-state {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .actions { display: flex; flex: none; gap: 8px; margin-left: auto; }
+    button {
+      min-height: 40px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      appearance: none;
+      background: #1b2026;
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.primary {
+      border-color: var(--action);
+      background: var(--action);
+      color: var(--action-text);
+    }
+    button:hover { filter: brightness(1.08); }
+    button:active { transform: translateY(1px); }
+    button:disabled { cursor: wait; opacity: 0.55; }
+    @media (max-width: 640px) {
+      body { grid-template-rows: 48px minmax(0, 1fr); }
+      header, .toolbar { padding-left: 12px; padding-right: 12px; }
+      .viewer { grid-template-rows: minmax(0, 1fr) 64px; }
+      .capture-state { display: none; }
+      button { padding-left: 10px; padding-right: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RoboParty Vision</h1>
+    <div class="status" id="status">
+      <span class="status-dot"></span>
+      <span id="status-text">Connecting</span>
+    </div>
+  </header>
+  <main>
+    <section class="viewer">
+      <div class="stage">
+        <img class="frame" src="/stream.mjpg" alt="Live RGB stream">
+      </div>
+      <div class="toolbar">
+        <div class="capture-state" id="capture-state">Ready to capture</div>
+        <div class="actions">
+          <button id="fullscreen-btn" type="button">Full screen</button>
+          <button class="primary" id="capture-btn" type="button">Capture JPEG</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const statusEl = document.getElementById('status');
+    const statusTextEl = document.getElementById('status-text');
+    const captureStateEl = document.getElementById('capture-state');
+    const captureBtn = document.getElementById('capture-btn');
+    const fullscreenBtn = document.getElementById('fullscreen-btn');
+
+    async function updateStatus() {
+      try {
+        const response = await fetch('/status', { cache: 'no-store' });
+        const payload = await response.json();
+        statusEl.classList.toggle('ready', payload.color_ready);
+        statusTextEl.textContent = payload.color_ready
+          ? `Live | frame ${payload.color_seq}`
+          : 'Waiting for RGB';
+        if (payload.last_capture_id) {
+          captureStateEl.textContent = `Saved ${payload.last_capture_id}`;
+        }
+      } catch (error) {
+        statusEl.classList.remove('ready');
+        statusTextEl.textContent = 'Offline';
+      }
+    }
+
+    async function captureSnapshot() {
+      captureBtn.disabled = true;
+      try {
+        const response = await fetch('/snapshot.jpg', {
+          method: 'POST',
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          throw new Error(`capture failed: ${response.status}`);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const name = response.headers.get('X-Capture-Name') || 'roboparty_capture.jpg';
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = name;
+        link.click();
+        captureStateEl.textContent = `Saved ${name}`;
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) {
+        console.error(error);
+        alert(`Capture failed: ${error.message}`);
+      } finally {
+        captureBtn.disabled = false;
+      }
+    }
+
+    captureBtn.addEventListener('click', captureSnapshot);
+    fullscreenBtn.addEventListener('click', async () => {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    });
+    document.addEventListener('fullscreenchange', () => {
+      fullscreenBtn.textContent = document.fullscreenElement
+        ? 'Exit full screen'
+        : 'Full screen';
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key.toLowerCase() === 'c' && !event.repeat) captureSnapshot();
+    });
+
+    updateStatus();
+    setInterval(updateStatus, 1000);
+  </script>
+</body>
+</html>

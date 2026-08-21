@@ -17,6 +17,7 @@ AUTOSTART_ENABLED=${AUTOSTART_ENABLED:-0}
 BUILD_ON_START=${BUILD_ON_START:-0}
 ROBOT=${ROBOT:-rpo}
 POLICY=${POLICY:-default}
+CAMERA_ENABLED=${CAMERA_ENABLED:-0}
 STARTUP_DELAY_SEC=${STARTUP_DELAY_SEC:-10}
 
 case "$AUTOSTART_ENABLED" in
@@ -40,6 +41,15 @@ case "$BUILD_ON_START" in
         ;;
 esac
 
+case "$CAMERA_ENABLED" in
+    0) camera_option=--no-camera ;;
+    1) camera_option=--camera ;;
+    *)
+        echo "CAMERA_ENABLED 只能是 0 或 1" >&2
+        exit 1
+        ;;
+esac
+
 if [[ ! "$STARTUP_DELAY_SEC" =~ ^[0-9]+$ ]]; then
     echo "STARTUP_DELAY_SEC 必须是非负整数" >&2
     exit 1
@@ -53,4 +63,5 @@ fi
 exec "$SCRIPT_DIR/start_robot.sh" \
     --robot "$ROBOT" \
     --policy "$POLICY" \
+    "$camera_option" \
     "$build_option"

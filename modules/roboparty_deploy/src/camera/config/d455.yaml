@@ -1,0 +1,15 @@
+# D455 RGB + depth configuration for the head-mounted camera.
+# Keep the profile conservative for the robot's current deployment setup.
+serial_no: "_245022302750"
+enable_color: true
+enable_depth: true
+rgb_camera.color_profile: "640x480x15"
+depth_module.depth_profile: "640x480x15"
+enable_sync: true
+align_depth.enable: true
+pointcloud.enable: false
+enable_gyro: false
+enable_accel: false
+publish_tf: true
+
+# TODO: publish the measured head_link -> camera_link extrinsic transform.
