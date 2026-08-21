@@ -54,4 +54,7 @@ temp
 cmake-build-debug
 .idea
 log
+
+# Runtime and experiment output
 runtime_logs/
+experiment_logs/
