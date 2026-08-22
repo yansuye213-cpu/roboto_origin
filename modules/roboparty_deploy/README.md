@@ -277,17 +277,17 @@ Once everything is ready, run the script to start the software:
 ./tools/start_robot.sh
 ```
 
-By default, this starts the head-mounted D455, the `default` inference node for the `rpo` robot, and the joystick node. Policy control still starts only after pressing `B` on the gamepad. You can also select the robot and policy explicitly:
+By default, this starts only the `default` inference node for the `rpo` robot and the joystick node. Policy control still starts only after pressing `B` on the gamepad. The RealSense camera and web service are currently disabled and do not join DDS. You can also select the robot and policy explicitly:
 
 ```bash
 ./tools/start_robot.sh --robot rpo --policy amp
 ./tools/start_robot.sh rpo beyondmimic
 ```
 
-Add `--no-camera` to temporarily disable the head-mounted D455 with serial number `245022302750`:
+`roboparty_camera` still participates in normal workspace builds, but it is not started by default. Pass `--camera` explicitly for a temporary camera test:
 
 ```bash
-./tools/start_robot.sh --robot rpo --policy default --no-camera
+./tools/start_robot.sh --robot rpo --policy default --camera
 ```
 
 The camera publishes RGB and aligned depth at `640x480@15` by default, with the point cloud and camera IMU disabled. Settings live in `src/camera/config/d455.yaml`. The startup script launches the camera first and waits for one RGB and one depth frame; a camera failure only stops its own `camera_session` and does not affect inference or the joystick. The camera also starts an independent `camera_web_session` on port `8080`. Open `http://<ASUS-IP>:8080/` to view the live RGB stream; click `Capture JPEG` or press `C` to save the current RGB frame as a JPEG under `~/图片/limrobot_camera/` and download the same image in the browser. The page source lives in `src/camera/web/index.html`. The web service no longer subscribes to or saves depth data; the D455 node continues publishing its depth topics normally. If you only want to test the web service by itself, run `ros2 launch roboparty_camera web.launch.py` inside the workspace. Until the head mounting transform is calibrated, this package publishes only the internal RealSense TF tree.
@@ -296,16 +296,14 @@ The camera publishes RGB and aligned depth at `640x480@15` by default, with the 
 
 - `inference_session`: inference node
 - `joy_session`: joystick node
-- `camera_session`: D455 node (enabled by default; disabled with `--no-camera`)
-- `camera_web_session`: camera web service (starts with the camera)
+
+It currently does not create `camera_session` or `camera_web_session`.
 
 Use the following commands to inspect their output:
 
 ```bash
 screen -r inference_session
 screen -r joy_session
-screen -r camera_session
-screen -r camera_web_session
 ```
 
 Use the following commands to stop the corresponding background components:
@@ -313,8 +311,6 @@ Use the following commands to stop the corresponding background components:
 ```bash
 screen -S inference_session -X quit
 screen -S joy_session -X quit
-screen -S camera_session -X quit
-screen -S camera_web_session -X quit
 ```
 
 If you need to switch to a different policy model, pass the `policy` argument. It selects a config from `src/inference/robots/rpo/configs/`:

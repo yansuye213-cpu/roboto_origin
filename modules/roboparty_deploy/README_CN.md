@@ -277,17 +277,17 @@ motor_zero_offset:
 ./tools/start_robot.sh
 ```
 
-默认会启动头部 D455、`rpo` 机器人的 `default` 推理节点和手柄节点；策略控制仍需按手柄 `B` 才开始。也可以显式选择机器人和策略：
+默认只启动 `rpo` 机器人的 `default` 推理节点和手柄节点；策略控制仍需按手柄 `B` 才开始。RealSense 相机与网页服务当前停用，不会加入 DDS。也可以显式选择机器人和策略：
 
 ```bash
 ./tools/start_robot.sh --robot rpo --policy amp
 ./tools/start_robot.sh rpo beyondmimic
 ```
 
-如需临时关闭头部 D455（序列号 `245022302750`），增加 `--no-camera`：
+`roboparty_camera` 仍会正常参与全量编译，但默认不启动。需要临时测试相机时显式使用 `--camera`：
 
 ```bash
-./tools/start_robot.sh --robot rpo --policy default --no-camera
+./tools/start_robot.sh --robot rpo --policy default --camera
 ```
 
 相机默认发布 RGB 与对齐深度，分辨率和帧率均为 `640x480@15`，并关闭点云与相机 IMU。相机参数位于 `src/camera/config/d455.yaml`。启动脚本会先启动相机并等待 RGB/Depth 首帧；相机失败时只停止自己的 `camera_session`，不会影响推理或手柄。相机还会顺带启动一个独立的网页服务 `camera_web_session`，默认监听 `8080` 端口。打开 `http://<ASUS-IP>:8080/` 可以实时看 RGB，点击 `Capture JPEG` 或按 `C` 会把当前 RGB 帧以 JPEG 保存到主机的 `~/图片/limrobot_camera/`，同时浏览器也会下载同一张图片。网页文件位于 `src/camera/web/index.html`，网页服务不订阅或保存深度数据；深度话题仍由 D455 节点正常发布。如果只想单独测试网页服务，可以在工作空间里执行 `ros2 launch roboparty_camera web.launch.py`。未完成头部安装外参标定前，本启动包只发布 RealSense 内部 TF。
@@ -296,16 +296,14 @@ motor_zero_offset:
 
 - `inference_session`：推理节点
 - `joy_session`：手柄节点
-- `camera_session`：D455 节点（默认启动，使用 `--no-camera` 时关闭）
-- `camera_web_session`：相机网页服务（默认随相机一起启动）
+
+当前不会创建 `camera_session` 或 `camera_web_session`。
 
 可使用以下命令查看后台输出：
 
 ```bash
 screen -r inference_session
 screen -r joy_session
-screen -r camera_session
-screen -r camera_web_session
 ```
 
 可使用以下命令停止对应后台组件：
@@ -313,8 +311,6 @@ screen -r camera_web_session
 ```bash
 screen -S inference_session -X quit
 screen -S joy_session -X quit
-screen -S camera_session -X quit
-screen -S camera_web_session -X quit
 ```
 
 如果需要切换不同的策略模型，可以通过 `policy` 参数选择 `src/inference/robots/rpo/configs/` 下的配置：
@@ -839,7 +835,7 @@ systemctl status roboparty.service --no-pager
 grep -E '^(AUTOSTART_ENABLED|BUILD_ON_START|CAMERA_ENABLED)=' tools/roboparty-autostart.conf
 ```
 
-只有同时满足以下条件，开机时才会启动相机：
+相机当前不会随开机启动，因为 `CAMERA_ENABLED=0`。以后恢复自启动时必须同时满足以下条件：
 
 - `roboparty.service` 显示 `enabled`
 - `roboparty-autostart.conf` 中 `AUTOSTART_ENABLED=1`
@@ -896,7 +892,7 @@ screen -S camera_web_session -X quit
 ```
 
 只停止相机后，服务不会立刻把它拉起；但下次重启 `roboparty.service` 或重新开机时，
-由于 `CAMERA_ENABLED=1`，相机仍会自动启动。
+由于当前 `CAMERA_ENABLED=0`，下次重启服务或重新开机也不会启动相机。
 
 查看本次开机的自启动日志：
 
@@ -904,14 +900,13 @@ screen -S camera_web_session -X quit
 journalctl -u roboparty.service -b --no-pager
 ```
 
-手动完整启动（包含 D455，相机会保持独立，策略仍需按手柄 `B` 才开始）：
+手动启动机器人（当前只启动推理与手柄，策略仍需按手柄 `B` 才开始）：
 
 ```bash
 ./tools/start_robot.sh
 ```
 
-手动执行 `./tools/start_robot.sh` 时，相机默认启动；只有增加 `--no-camera` 才会关闭。
-自启动脚本仍根据 `CAMERA_ENABLED` 显式控制相机，目前配置为 `CAMERA_ENABLED=1`。
+手动执行 `./tools/start_robot.sh` 时相机默认关闭。自启动脚本仍根据 `CAMERA_ENABLED` 显式控制相机，目前配置为 `CAMERA_ENABLED=0`；需要临时测试时仍可手动传入 `--camera`。
 
 从开发电脑连接 ASUS 主控：
 

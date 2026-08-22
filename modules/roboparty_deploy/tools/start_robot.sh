@@ -6,6 +6,9 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # 无颜色
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+DEPLOY_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+
 # 函数：打印成功消息
 print_success() {
     echo -e "${GREEN}$1${NC}"
@@ -25,11 +28,11 @@ show_usage() {
     echo "用法: $0 [--robot ROBOT] [--policy POLICY] [--camera|--no-camera] [--build|--no-build]"
     echo "      $0 [ROBOT] [POLICY]"
     echo
-    echo "默认: robot=rpo, policy=default, camera=on, build=on"
+    echo "默认: robot=rpo, policy=default, camera=off, build=on"
     echo "示例: $0 --robot rpo --policy amp"
     echo "示例: $0 rpo beyondmimic"
     echo "示例: $0 --robot rpo --policy default --no-build"
-    echo "示例: $0 --robot rpo --policy default --no-camera"
+    echo "示例: $0 --robot rpo --policy default --camera  # 临时显式启动相机"
 }
 
 validate_name() {
@@ -45,7 +48,7 @@ validate_name() {
 ROBOT="rpo"
 POLICY="default"
 BUILD_ON_START=1
-CAMERA_ON_START=1
+CAMERA_ON_START=0
 ROBOT_SET=0
 POLICY_SET=0
 
@@ -339,9 +342,8 @@ verify_dds_effectiveness() {
     fi
 }
 
-# 切换到脚本目录
-cd "$(dirname "$0")"
-cd ..
+# 切换到部署工作空间。
+cd "$DEPLOY_DIR"
 
 POLICY_FILE="$POLICY"
 if [[ "$POLICY_FILE" != *.yaml ]]; then
@@ -415,9 +417,9 @@ fi
 
 # 手动运行默认编译；自启动服务使用 --no-build，避免在开机阶段改写构建产物。
 if [ "$BUILD_ON_START" -eq 1 ]; then
-    print_info "编译推理包..."
+    print_info "编译机器人工作空间..."
     colcon build --base-paths src --symlink-install || {
-        print_error "推理包编译失败"
+        print_error "机器人工作空间编译失败"
         exit 1
     }
 elif [ ! -f install/setup.bash ]; then
@@ -444,7 +446,7 @@ if [ "$CAMERA_ON_START" -eq 1 ]; then
         print_info "相机保持独立失败状态；其他机器人组件不受影响。"
     fi
 else
-    print_info "相机启动已通过 --no-camera 关闭。"
+    print_info "相机与网页节点已关闭，不会加入 DDS。"
 fi
 
 start_component "inference_session" "ros2 launch roboparty_inference inference.launch.py robot:=$ROBOT policy:=$POLICY" "inference_node" 15
